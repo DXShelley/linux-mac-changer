@@ -1,9 +1,14 @@
 #!/bin/bash
 
 #
-# Linux 远程安全 MAC 修改脚本
+# Linux MAC Changer - 远程 MAC 地址修改工具
 # 修改 MAC 地址后自动获取新 IP 并通知用户
-# 支持 Debian/Ubuntu 等主流 Linux 发行版
+# 版本: 1.0.0
+# 许可证: MIT License
+# 作者: DXShelley
+# 仓库: https://github.com/DXShelley/linux-mac-changer
+#
+# 支持 Debian/Ubuntu/Kali 等 Linux 发行版
 #
 
 # 配置区域

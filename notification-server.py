@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-简单的通知接收服务器
+Linux MAC Changer - 通知接收服务器
+
 接收 Linux 设备发送的 MAC/IP 通知并显示
+版本: 1.0.0
+许可: MIT License
+作者: DXShelley
+仓库: https://github.com/DXShelley/linux-mac-changer
 """
 
 from flask import Flask, request, jsonify, Response
