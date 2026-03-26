@@ -59,37 +59,56 @@ check_system() {
         fi
     done
 
-    # 检查可选命令
+    # 检查 DHCP 客户端（必需，否则修改 MAC 后无法获取 IP）
     local has_dhclient=false
     local has_dhcpcd=false
-    local has_jq=false
-    local has_curl=false
-
     if command -v dhclient &>/dev/null; then
         has_dhclient=true
     fi
     if command -v dhcpcd &>/dev/null; then
         has_dhcpcd=true
     fi
-    if command -v jq &>/dev/null; then
-        has_jq=true
-    fi
-    if command -v curl &>/dev/null; then
-        has_curl=true
-    elif command -v wget &>/dev/null; then
-        has_curl=true
+
+    if [ "$has_dhclient" = false ] && [ "$has_dhcpcd" = false ]; then
+        echo -e "${RED}错误: 缺少 DHCP 客户端（dhclient 或 dhcpcd）${NC}"
+        echo -e "${RED}修改 MAC 地址后需要 DHCP 客户端获取 IP，否则网络将断开${NC}"
+        errors=$((errors + 1))
     fi
 
-    # DHCP 客户端检查
-    if [ "$has_dhclient" = false ] && [ "$has_dhcpcd" = false ]; then
-        echo -e "${YELLOW}警告: 未找到 dhclient 或 dhcpcd，IP 自动获取可能失败${NC}"
+    # 检查 HTTP 客户端（根据 NOTIFY_METHOD 决定）
+    local has_curl=false
+    local has_wget=false
+    if command -v curl &>/dev/null; then
+        has_curl=true
+    fi
+    if command -v wget &>/dev/null; then
+        has_wget=true
+    fi
+
+    # 如果使用 URL/Telegram 通知，需要 HTTP 客户端
+    if [ "$NOTIFY_METHOD" = "url" ] || [ "$NOTIFY_METHOD" = "telegram" ] || [ "$NOTIFY_METHOD" = "all" ]; then
+        if [ "$has_curl" = false ] && [ "$has_wget" = false ]; then
+            echo -e "${RED}错误: NOTIFY_METHOD='$NOTIFY_METHOD' 需要 curl 或 wget${NC}"
+            errors=$((errors + 1))
+        fi
+    fi
+
+    # 检查可选命令（jq）
+    local has_jq=false
+    if command -v jq &>/dev/null; then
+        has_jq=true
     fi
 
     # 输出系统信息
     if [ "$errors" -eq 0 ]; then
         log "系统检测通过: $OS_NAME $OS_VERSION"
-        [ "$has_jq" = true ] && log "jq 已安装 (JSON 构建)" || log "jq 未安装 (使用备用 JSON 方式)"
-        [ "$has_curl" = true ] && log "curl/wget 可用 (HTTP 通知)"
+        [ "$has_dhclient" = true ] && log "DHCP: dhclient" || log "DHCP: dhcpcd"
+        [ "$has_jq" = true ] && log "JSON: jq 已安装" || log "JSON: 使用备用方式"
+        if [ "$has_curl" = true ]; then
+            log "HTTP: curl 可用"
+        elif [ "$has_wget" = true ]; then
+            log "HTTP: wget 可用"
+        fi
     else
         echo -e "${RED}系统检测失败，请安装缺少的依赖${NC}"
         exit 1
@@ -931,8 +950,14 @@ ${YELLOW}保持 IP 模式（-keepip）:${NC}
 ${YELLOW}系统要求:${NC}
   - 操作系统: Debian/Ubuntu/Kali 等 Linux 发行版
   - 权限: root (sudo)
-  - 必需命令: ip, grep, awk, sed
-  - 可选命令: dhclient/dhcpcd (DHCP), jq (JSON), curl/wget (HTTP)
+
+  - 必需命令:
+    • ip, grep, awk, sed (基础网络操作)
+    • dhclient 或 dhcpcd (DHCP 客户端，用于获取 IP)
+    • curl 或 wget (HTTP 客户端，用于 URL/Telegram 通知)
+
+  - 可选命令:
+    • jq (JSON 处理，未安装时使用备用方案)
 
 EOF
 }

@@ -55,14 +55,16 @@
 | `grep` | 文本搜索 | `grep` |
 | `awk` | 文本处理 | `gawk` / `awk` |
 | `sed` | 文本处理 | `sed` |
+| `dhclient` / `dhcpcd` | DHCP 客户端 | `isc-dhcp-client` / `dhcpcd5` |
+| `curl` / `wget` | HTTP 客户端 | `curl` / `wget` |
+
+**注意**：DHCP 客户端和 HTTP 客户端是必需的，修改 MAC 后需要 DHCP 获取 IP，通知功能需要 HTTP 客户端。
 
 ### 可选依赖
 
 | 命令 | 用途 | 安装包 |
 |------|------|--------|
-| `dhclient` / `dhcpcd` | DHCP 客户端 | `isc-dhcp-client` / `dhcpcd5` |
 | `jq` | JSON 处理 | `jq` |
-| `curl` / `wget` | HTTP 客户端 | `curl` / `wget` |
 | `nmap` | 网络扫描 | `nmap` |
 
 ## 📦 安装
@@ -79,8 +81,14 @@ cd linux-mac-changer
 **Debian/Ubuntu**:
 ```bash
 sudo apt update
-sudo apt install -y iproute2 grep gawk sed jq curl
+# 必需依赖
+sudo apt install -y iproute2 grep gawk sed
 sudo apt install -y isc-dhcp-client  # 或 dhcpcd5
+sudo apt install -y curl             # 或 wget
+
+# 可选依赖
+sudo apt install -y jq               # JSON 处理（推荐）
+sudo apt install -y nmap             # 网络扫描（用于 scan 命令）
 ```
 
 ### 3. 配置权限
