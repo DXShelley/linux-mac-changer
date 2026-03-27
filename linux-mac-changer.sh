@@ -36,7 +36,7 @@ check_system() {
     # 检查 root 权限
     if [ "$EUID" -ne 0 ]; then
         echo -e "${RED}错误: 此脚本需要 root 权限${NC}"
-        echo "请使用: sudo $0"
+        echo "请使用: sudo sh $0"
         exit 1
     fi
 
@@ -752,18 +752,46 @@ PYTHON_SCRIPT
                 # 验证修改后的文件
                 if grep -q "macaddress: $new_mac" "$netplan_file" && \
                    grep -q "$interface:" "$netplan_file"; then
-                    # 尝试应用配置
-                    echo -e "${CYAN}正在应用netplan配置...${NC}"
-                    if netplan apply 2>&1 | tee /tmp/netplan_apply.log; then
-                        log "netplan: 已更新 $netplan_file"
-                        echo -e "${GREEN}✓ 已永久保存 (netplan)${NC}"
-                        echo -e "${GREEN}✓ 配置已应用${NC}"
-                        echo -e "${CYAN}备份文件: $backup_file${NC}"
-                        return 0
+                    # 询问是否立即应用配置
+                    echo ""
+                    echo -e "${YELLOW}========================================${NC}"
+                    echo -e "${RED}⚠️  警告: 应用 netplan 配置将会重启网络！${NC}"
+                    echo -e "${YELLOW}========================================${NC}"
+                    echo ""
+                    echo -e "${YELLOW}这将会导致:${NC}"
+                    echo -e "${YELLOW}  • 当前 SSH 连接将会断开${NC}"
+                    echo -e "${YELLOW}  • 网络接口将会短暂中断${NC}"
+                    echo -e "${YELLOW}  • 所有网络连接需要重新建立${NC}"
+                    echo ""
+                    echo -e "${CYAN}配置文件: $netplan_file${NC}"
+                    echo -e "${CYAN}备份文件: $backup_file${NC}"
+                    echo ""
+                    echo -e "${GREEN}如果不想立即应用，可以稍后手动运行:${NC}"
+                    echo -e "${GREEN}  sudo netplan apply${NC}"
+                    echo ""
+                    read -p "是否立即应用配置？(y/N): " apply_confirm
+                    echo ""
+
+                    if [ "$apply_confirm" = "y" ] || [ "$apply_confirm" = "Y" ]; then
+                        # 尝试应用配置
+                        echo -e "${CYAN}正在应用netplan配置...${NC}"
+                        if netplan apply 2>&1 | tee /tmp/netplan_apply.log; then
+                            log "netplan: 已更新 $netplan_file"
+                            echo -e "${GREEN}✓ 已永久保存 (netplan)${NC}"
+                            echo -e "${GREEN}✓ 配置已应用${NC}"
+                            echo -e "${CYAN}备份文件: $backup_file${NC}"
+                            return 0
+                        else
+                            echo -e "${YELLOW}⚠️  配置已保存，但 netplan apply 有警告${NC}"
+                            echo -e "${CYAN}请检查: /tmp/netplan_apply.log${NC}"
+                            echo -e "${CYAN}或手动运行: sudo netplan apply${NC}"
+                            return 0
+                        fi
                     else
-                        echo -e "${YELLOW}⚠️  配置已保存，但 netplan apply 有警告${NC}"
-                        echo -e "${CYAN}请检查: /tmp/netplan_apply.log${NC}"
-                        echo -e "${CYAN}或手动运行: sudo netplan apply${NC}"
+                        echo -e "${CYAN}配置已保存，但未应用${NC}"
+                        echo -e "${YELLOW}⚠️  配置将在下次重启或手动运行 netplan apply 后生效${NC}"
+                        echo -e "${CYAN}手动应用命令: sudo netplan apply${NC}"
+                        echo -e "${CYAN}备份文件: $backup_file${NC}"
                         return 0
                     fi
                 else
@@ -1846,108 +1874,101 @@ scan_orange_pi() {
 
 # 显示帮助
 show_help() {
-    cat << EOF
-${BLUE}Linux 远程 MAC 修改工具${NC}
+    # 获取脚本名称
+    local script_name=$(basename "$0")
 
-${YELLOW}用法:${NC}
-  $0 <命令> [参数]
+    # 使用 printf 输出，确保颜色正确显示
+    printf "${BLUE}Linux 远程 MAC 修改工具${NC}\n\n"
+    printf "${YELLOW}用法:${NC}\n"
+    printf "  sudo sh %s <命令> [参数]\n\n" "$script_name"
 
-${YELLOW}命令:${NC}
-  random <接口>              使用随机 MAC 并通知（推荐）
-  random-keepip <接口>       使用随机 MAC，尝试保持 IP 不变
-  custom <接口> <MAC>        使用指定 MAC 并通知
-  custom-keepip <接口> <MAC> 使用指定 MAC，尝试保持 IP 不变
-  scan [网段]                扫描局域网查找本机
-  verify-permanent <接口>    验证永久 MAC 配置是否正确
-  notify-test [接口]         测试通知配置（默认 eth0）
+    printf "${YELLOW}命令:${NC}\n"
+    printf "  random <接口>              使用随机 MAC 并通知（推荐）\n"
+    printf "  random-keepip <接口>       使用随机 MAC，尝试保持 IP 不变\n"
+    printf "  custom <接口> <MAC>        使用指定 MAC 并通知\n"
+    printf "  custom-keepip <接口> <MAC> 使用指定 MAC，尝试保持 IP 不变\n"
+    printf "  scan [网段]                扫描局域网查找本机\n"
+    printf "  verify-permanent <接口>    验证永久 MAC 配置是否正确\n"
+    printf "  notify-test [接口]         测试通知配置（默认 eth0）\n\n"
 
-${YELLOW}示例:${NC}
-  sudo $0 random eth0                           # 随机 MAC（IP 可能改变）
-  sudo $0 random-keepip eth0                    # 随机 MAC（尝试保持 IP）
-  sudo $0 custom eth0 90:2E:16:AB:CD:EF        # 指定 MAC
-  sudo $0 custom-keepip eth0 90:2E:16:AB:CD:EF # 指定 MAC（保持 IP）
-  $0 scan 192.168.70.0/24                      # 扫描查找
-  sudo $0 verify-permanent eth0                # 验证永久 MAC 配置
-  sudo $0 notify-test eth0                     # 测试通知
+    printf "${YELLOW}示例:${NC}\n"
+    printf "  sudo sh %s random eth0                           # 随机 MAC（IP 可能改变）\n" "$script_name"
+    printf "  sudo sh %s random-keepip eth0                    # 随机 MAC（尝试保持 IP）\n" "$script_name"
+    printf "  sudo sh %s custom eth0 90:2E:16:AB:CD:EF        # 指定 MAC\n" "$script_name"
+    printf "  sudo sh %s custom-keepip eth0 90:2E:16:AB:CD:EF # 指定 MAC（保持 IP）\n" "$script_name"
+    printf "  sh %s scan 192.168.70.0/24                      # 扫描查找\n" "$script_name"
+    printf "  sudo sh %s verify-permanent eth0                # 验证永久 MAC 配置\n" "$script_name"
+    printf "  sudo sh %s notify-test eth0                     # 测试通知\n\n" "$script_name"
 
-${YELLOW}配置说明:${NC}
-  编辑脚本顶部的配置区域设置:
-  - NOTIFY_METHOD: localfile, url, telegram, all
-  - REMOTE_NOTIFY_URL: 你的通知服务器 URL
-  - TELEGRAM_BOT_TOKEN: Telegram Bot Token
-  - TELEGRAM_CHAT_ID: Telegram Chat ID
-  - SCAN_NETWORK: 你的局域网段
+    printf "${YELLOW}配置说明:${NC}\n"
+    printf "  编辑脚本顶部的配置区域设置:\n"
+    printf "  - NOTIFY_METHOD: localfile, url, telegram, all\n"
+    printf "  - REMOTE_NOTIFY_URL: 你的通知服务器 URL\n"
+    printf "  - TELEGRAM_BOT_TOKEN: Telegram Bot Token\n"
+    printf "  - TELEGRAM_CHAT_ID: Telegram Chat ID\n"
+    printf "  - SCAN_NETWORK: 你的局域网段\n\n"
 
-${YELLOW}通知方式:${NC}
-  1. URL 通知: POST 结构化 JSON 到你的服务器
-     {
-       "hostname": "linux-host",
-       "status": "ip_kept",  // 或 "ip_changed", "test"
-       "interface": "eth0",
-       "mac": {"original": "xx:xx:xx:xx:xx:xx", "new": "yy:yy:yy:yy:yy:yy"},
-       "ip": {"original": "192.168.x.x", "current": "192.168.x.y"},
-       "gateway": "192.168.x.1",
-       "ssh": "ssh user@192.168.x.y",
-       "timestamp": "2026-03-26T20:00:00+08:00"
-     }
+    printf "${YELLOW}通知方式:${NC}\n"
+    printf "  1. URL 通知: POST 结构化 JSON 到你的服务器\n"
+    printf "     {\n"
+    printf "       \"hostname\": \"linux-host\",\n"
+    printf "       \"status\": \"ip_kept\",  // 或 \"ip_changed\", \"test\"\n"
+    printf "       \"interface\": \"eth0\",\n"
+    printf "       \"mac\": {\"original\": \"xx:xx:xx:xx:xx:xx\", \"new\": \"yy:yy:yy:yy:yy:yy\"},\n"
+    printf "       \"ip\": {\"original\": \"192.168.x.x\", \"current\": \"192.168.x.y\"},\n"
+    printf "       \"gateway\": \"192.168.x.1\",\n"
+    printf "       \"ssh\": \"ssh user@192.168.x.y\",\n"
+    printf "       \"timestamp\": \"2026-03-26T20:00:00+08:00\"\n"
+    printf "     }\n\n"
+    printf "  2. Telegram: 发送到你的 Telegram\n"
+    printf "     需要创建 Bot 并获取 token/chat_id\n\n"
+    printf "  3. 本地文件: 保存到 /tmp/new_ip.txt\n"
+    printf "     需要通过其他方式读取（如串口）\n\n"
 
-  2. Telegram: 发送到你的 Telegram
-     需要创建 Bot 并获取 token/chat_id
+    printf "${YELLOW}断连后如何找回 IP?${NC}\n"
+    printf "  1. 如果配置了 URL/Telegram 通知，查看通知\n"
+    printf "  2. 在路由器查看 DHCP 客户端列表（查找新 MAC）\n"
+    printf "  3. 从其他设备扫描局域网:\n"
+    printf "     sh %s scan 192.168.1.0/24\n" "$script_name"
+    printf "  4. 使用串口连接查看\n\n"
 
-  3. 本地文件: 保存到 /tmp/new_ip.txt
-     需要通过其他方式读取（如串口）
+    printf "${YELLOW}保持 IP 模式（-keepip）:${NC}\n"
+    printf "  适用场景: 隐藏身份时不想频繁更改 SSH 连接\n\n"
+    printf "  工作原理:\n"
+    printf "  1. 尝试 DHCP REQUEST 请求原 IP（依赖 DHCP 服务器配置）\n"
+    printf "  2. 如果失败，直接设置静态 IP\n"
+    printf "  3. 两种方式都失败时，允许获取新 IP（并发送通知）\n\n"
+    printf "  成功率:\n"
+    printf "  - DHCP REQUEST: 约 60-80%%（取决于 DHCP 服务器）\n"
+    printf "  - 静态 IP: 约 95%%（需要确保 IP 不被占用）\n"
+    printf "  - 综合成功率: 约 98%%\n\n"
+    printf "  注意事项:\n"
+    printf "  - 如果 IP 冲突，静态 IP 方式可能导致网络问题\n"
+    printf "  - 建议先在测试环境验证\n\n"
 
-${YELLOW}断连后如何找回 IP?${NC}
-  1. 如果配置了 URL/Telegram 通知，查看通知
-  2. 在路由器查看 DHCP 客户端列表（查找新 MAC）
-  3. 从其他设备扫描局域网:
-     $0 scan 192.168.1.0/24
-  4. 使用串口连接查看
+    printf "${YELLOW}永久保存 MAC 地址:${NC}\n"
+    printf "  修改完成后会询问是否永久保存，支持以下方式:\n"
+    printf "  - NetworkManager: nmcli 命令配置 (需要 systemd)\n"
+    printf "  - systemd-networkd: 创建 .link 文件 (需要 systemd)\n"
+    printf "  - ifupdown: 修改 /etc/network/interfaces (兼容非 systemd)\n"
+    printf "  - Netplan: 更新 .yaml 配置 (需要 systemd + python3-yaml)\n\n"
 
-${YELLOW}保持 IP 模式（-keepip）:${NC}
-  适用场景: 隐藏身份时不想频繁更改 SSH 连接
+    printf "${YELLOW}系统要求:${NC}\n"
+    printf "  - 操作系统: Debian 8+, Ubuntu 16.04+, Kali, Raspberry Pi OS 等\n"
+    printf "  - 内核版本: Linux 3.0+ (推荐 4.0+)\n"
+    printf "  - 权限: root (sudo)\n\n"
+    printf "  - 必需命令:\n"
+    printf "    • ip, grep, awk, sed (基础网络操作)\n"
+    printf "    • dhclient 或 dhcpcd (DHCP 客户端，用于获取 IP)\n"
+    printf "    • curl 或 wget (HTTP 客户端，用于 URL/Telegram 通知)\n\n"
+    printf "  - 可选命令:\n"
+    printf "    • jq (JSON 处理，未安装时使用备用方案)\n"
+    printf "    • python3-yaml (Netplan 永久保存需要)\n\n"
 
-  工作原理:
-  1. 尝试 DHCP REQUEST 请求原 IP（依赖 DHCP 服务器配置）
-  2. 如果失败，直接设置静态 IP
-  3. 两种方式都失败时，允许获取新 IP（并发送通知）
-
-  成功率:
-  - DHCP REQUEST: 约 60-80%（取决于 DHCP 服务器）
-  - 静态 IP: 约 95%（需要确保 IP 不被占用）
-  - 综合成功率: 约 98%
-
-  注意事项:
-  - 如果 IP 冲突，静态 IP 方式可能导致网络问题
-  - 建议先在测试环境验证
-
-${YELLOW}永久保存 MAC 地址:${NC}
-  修改完成后会询问是否永久保存，支持以下方式:
-  - NetworkManager: nmcli 命令配置 (需要 systemd)
-  - systemd-networkd: 创建 .link 文件 (需要 systemd)
-  - ifupdown: 修改 /etc/network/interfaces (兼容非 systemd)
-  - Netplan: 更新 .yaml 配置 (需要 systemd + python3-yaml)
-
-${YELLOW}系统要求:${NC}
-  - 操作系统: Debian 8+, Ubuntu 16.04+, Kali, Raspberry Pi OS 等
-  - 内核版本: Linux 3.0+ (推荐 4.0+)
-  - 权限: root (sudo)
-
-  - 必需命令:
-    • ip, grep, awk, sed (基础网络操作)
-    • dhclient 或 dhcpcd (DHCP 客户端，用于获取 IP)
-    • curl 或 wget (HTTP 客户端，用于 URL/Telegram 通知)
-
-  - 可选命令:
-    • jq (JSON 处理，未安装时使用备用方案)
-    • python3-yaml (Netplan 永久保存需要)
-
-${YELLOW}系统兼容性:${NC}
-  - systemd 系统: 完全支持所有功能
-  - 非 systemd 系统: MAC 修改功能正常，永久保存使用 ifupdown
-  - 旧系统 (Debian 8): 建议安装 systemd 或仅使用临时修改
-
-EOF
+    printf "${YELLOW}系统兼容性:${NC}\n"
+    printf "  - systemd 系统: 完全支持所有功能\n"
+    printf "  - 非 systemd 系统: MAC 修改功能正常，永久保存使用 ifupdown\n"
+    printf "  - 旧系统 (Debian 8): 建议安装 systemd 或仅使用临时修改\n"
 }
 
 # 测试通知
