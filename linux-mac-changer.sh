@@ -99,6 +99,28 @@ check_system() {
         has_jq=true
     fi
 
+    # 检查 NetworkManager 相关工具（如果使用 NetworkManager）
+    local has_nmcli=false
+    if systemctl is-active --quiet NetworkManager 2>/dev/null; then
+        if command -v nmcli &>/dev/null; then
+            has_nmcli=true
+        else
+            echo -e "${YELLOW}警告: 检测到 NetworkManager 但未安装 nmcli${NC}"
+            echo -e "${YELLOW}永久保存功能可能不可用，请安装: apt install network-manager${NC}"
+        fi
+    fi
+
+    # 检查 python3（Netplan 需要）
+    local has_python3=false
+    if [ -d /etc/netplan ]; then
+        if command -v python3 &>/dev/null; then
+            has_python3=true
+        else
+            echo -e "${YELLOW}警告: 检测到 Netplan 但未安装 python3${NC}"
+            echo -e "${YELLOW}永久保存功能将需要手动配置 YAML 文件${NC}"
+        fi
+    fi
+
     # 输出系统信息
     if [ "$errors" -eq 0 ]; then
         log "系统检测通过: $OS_NAME $OS_VERSION"
@@ -142,18 +164,42 @@ make_mac_permanent() {
     local manager=$(detect_network_manager)
 
     echo -e "${CYAN}正在永久保存 MAC 地址...${NC}"
+    echo -e "${CYAN}检测到网络管理方式: $manager${NC}"
 
     case "$manager" in
         networkmanager)
             # NetworkManager 方式
-            local conn_name=$(nmcli -t -f NAME,DEVICE connection show --active | grep ":$interface$" | cut -d: -f1)
-            if [ -n "$conn_name" ]; then
-                nmcli connection modify "$conn_name" ethernet.cloned-mac-address "$new_mac"
-                log "NetworkManager: 已设置 $conn_name 的 MAC 为 $new_mac"
-                echo -e "${GREEN}✓ 已永久保存 (NetworkManager)${NC}"
-                return 0
+            # 获取活跃连接名称（更可靠的方式）
+            local conn_name=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep ":$interface$" | head -1 | cut -d: -f1)
+
+            if [ -z "$conn_name" ]; then
+                # 尝试通过设备获取连接
+                conn_name=$(nmcli device status "$interface" 2>/dev/null | grep -v "DEVICE" | awk '{print $4}' | grep -v "^$")
+            fi
+
+            if [ -n "$conn_name" ] && [ "$conn_name" != "" ]; then
+                # 检查是否已设置
+                local current_mac=$(nmcli -g connection.ethernet.cloned-mac-address connection show "$conn_name" 2>/dev/null)
+
+                if [ "$current_mac" = "--" ] || [ -z "$current_mac" ]; then
+                    # 设置 MAC 地址
+                    if nmcli connection modify "$conn_name" ethernet.cloned-mac-address "$new_mac" 2>/dev/null; then
+                        log "NetworkManager: 已设置 $conn_name 的 MAC 为 $new_mac"
+                        echo -e "${GREEN}✓ 已永久保存 (NetworkManager)${NC}"
+                        echo -e "${YELLOW}⚠️  需要重新连接生效: nmcli connection up '$conn_name'${NC}"
+                        return 0
+                    else
+                        echo -e "${RED}✗ nmcli 命令执行失败${NC}"
+                        return 1
+                    fi
+                else
+                    echo -e "${YELLOW}✗ 该连接已设置 MAC: $current_mac${NC}"
+                    echo -e "${CYAN}如需修改，请先删除原设置: nmcli connection modify '$conn_name' ethernet.cloned-mac-address ''${NC}"
+                    return 1
+                fi
             else
                 echo -e "${YELLOW}✗ 无法找到网络连接${NC}"
+                echo -e "${CYAN}请使用 'nmcli connection show' 查看所有连接${NC}"
                 return 1
             fi
             ;;
@@ -161,38 +207,90 @@ make_mac_permanent() {
         systemd-networkd)
             # systemd-networkd 方式
             local link_file="/etc/systemd/network/10-persistent-$interface.link"
-            cat > "$link_file" << EOF
+
+            # 检查文件是否已存在
+            if [ -f "$link_file" ]; then
+                echo -e "${YELLOW}⚠️  配置文件已存在: $link_file${NC}"
+                read -p "是否覆盖？(y/N): " overwrite
+                if [ "$overwrite" != "y" ] && [ "$overwrite" != "Y" ]; then
+                    echo "已取消"
+                    return 1
+                fi
+            fi
+
+            # 创建 .link 文件
+            if cat > "$link_file" << EOF
 [Match]
 OriginalName=$interface
 
 [Link]
 MACAddress=$new_mac
 EOF
-            log "systemd-networkd: 已创建 $link_file"
-            echo -e "${GREEN}✓ 已永久保存 (systemd-networkd)${NC}"
-            echo -e "${YELLOW}⚠️  需要重启生效: reboot${NC}"
-            return 0
+            then
+                # 验证文件内容
+                if grep -q "OriginalName=$interface" "$link_file" && grep -q "MACAddress=$new_mac" "$link_file"; then
+                    log "systemd-networkd: 已创建 $link_file"
+                    echo -e "${GREEN}✓ 已永久保存 (systemd-networkd)${NC}"
+                    echo -e "${YELLOW}⚠️  需要重启生效: reboot${NC}"
+                    return 0
+                else
+                    echo -e "${RED}✗ 配置文件验证失败${NC}"
+                    rm -f "$link_file"
+                    return 1
+                fi
+            else
+                echo -e "${RED}✗ 无法创建配置文件${NC}"
+                return 1
+            fi
             ;;
 
         ifupdown)
             # /etc/network/interfaces 方式
-            if grep -q "iface $interface" /etc/network/interfaces; then
-                if ! grep -q "hwaddress ether $new_mac" /etc/network/interfaces; then
-                    # 备份原文件
-                    cp /etc/network/interfaces "/etc/network/interfaces.backup.$(date +%Y%m%d%H%M%S)"
+            if [ ! -f /etc/network/interfaces ]; then
+                echo -e "${RED}✗ /etc/network/interfaces 文件不存在${NC}"
+                return 1
+            fi
 
-                    # 在对应接口配置中添加 hwaddress
-                    sed -i "/iface $interface/a\    hwaddress ether $new_mac" /etc/network/interfaces
+            # 检查接口是否在配置文件中
+            if grep -q "^iface $interface " /etc/network/interfaces; then
+                # 检查是否已设置 MAC
+                if grep -A 10 "^iface $interface " /etc/network/interfaces | grep -q "hwaddress ether $new_mac"; then
+                    echo -e "${YELLOW}✗ 该 MAC 已存在于配置文件中${NC}"
+                    return 1
+                fi
+
+                # 备份原文件
+                local backup_file="/etc/network/interfaces.backup.$(date +%Y%m%d%H%M%S)"
+                if ! cp /etc/network/interfaces "$backup_file"; then
+                    echo -e "${RED}✗ 无法备份配置文件${NC}"
+                    return 1
+                fi
+
+                # 在对应接口配置中添加 hwaddress（使用 awk 更可靠）
+                if awk -v iface="$interface" -v mac="$new_mac" '
+                    /^iface / { in_iface = ($2 == iface) }
+                    in_iface && /^    hwaddress/ { next }
+                    in_iface && /^    / && !added {
+                        print "    hwaddress ether " mac
+                        added = 1
+                    }
+                    { print }
+                    END { if (!added) exit 1 }
+                ' /etc/network/interfaces > /tmp/interfaces.tmp; then
+                    mv /tmp/interfaces.tmp /etc/network/interfaces
                     log "ifupdown: 已添加 MAC 到 /etc/network/interfaces"
                     echo -e "${GREEN}✓ 已永久保存 (ifupdown)${NC}"
                     echo -e "${YELLOW}⚠️  需要重启网络: systemctl restart networking${NC}"
+                    echo -e "${CYAN}备份文件: $backup_file${NC}"
                     return 0
                 else
-                    echo -e "${YELLOW}✗ MAC 已存在于配置文件中${NC}"
+                    echo -e "${RED}✗ 无法修改配置文件${NC}"
+                    rm -f /tmp/interfaces.tmp
                     return 1
                 fi
             else
                 echo -e "${YELLOW}✗ 接口 $interface 不在 /etc/network/interfaces 中${NC}"
+                echo -e "${CYAN}请在配置文件中添加该接口的配置${NC}"
                 return 1
             fi
             ;;
@@ -200,31 +298,168 @@ EOF
         netplan)
             # Netplan 方式 (Ubuntu 18.04+)
             local netplan_file=$(ls /etc/netplan/*.yaml 2>/dev/null | head -1)
-            if [ -n "$netplan_file" ]; then
-                # 备份
-                cp "$netplan_file" "${netplan_file}.backup.$(date +%Y%m%d%H%M%S)"
 
-                # 检查是否已有该接口配置
-                if grep -q "$interface:" "$netplan_file"; then
-                    # 已有配置，添加或修改 macaddress
-                    if grep -q "macaddress:" "$netplan_file"; then
-                        sed -i "s/macaddress:.*/macaddress: $new_mac/" "$netplan_file"
+            if [ -z "$netplan_file" ]; then
+                echo -e "${YELLOW}✗ 未找到 netplan 配置文件 (/etc/netplan/*.yaml)${NC}"
+                return 1
+            fi
+
+            echo -e "${CYAN}使用配置文件: $netplan_file${NC}"
+
+            # 备份
+            local backup_file="${netplan_file}.backup.$(date +%Y%m%d%H%M%S)"
+            if ! cp "$netplan_file" "$backup_file"; then
+                echo -e "${RED}✗ 无法备份配置文件${NC}"
+                return 1
+            fi
+
+            # 使用 Python 脚本更安全地修改 YAML
+            if command -v python3 &>/dev/null; then
+                python3 << PYTHON_SCRIPT
+import yaml
+import sys
+
+try:
+    with open('$netplan_file', 'r') as f:
+        config = yaml.safe_load(f)
+
+    # 确保有 ethernets 配置
+    if 'network' not in config:
+        config['network'] = {'version': 2}
+    if 'ethernets' not in config['network']:
+        config['network']['ethernets'] = {}
+
+    # 设置 MAC 地址
+    if '$interface' not in config['network']['ethernets']:
+        config['network']['ethernets']['$interface'] = {}
+
+    config['network']['ethernets']['$interface']['macaddress'] = '$new_mac'
+
+    # 写回文件（保持格式）
+    with open('$netplan_file', 'w') as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+    print("SUCCESS")
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
+PYTHON_SCRIPT
+
+                if [ $? -eq 0 ]; then
+                    # 应用配置
+                    if netplan apply 2>/dev/null; then
+                        log "netplan: 已更新 $netplan_file"
+                        echo -e "${GREEN}✓ 已永久保存 (netplan)${NC}"
+                        echo -e "${CYAN}备份文件: $backup_file${NC}"
+                        return 0
                     else
-                        sed -i "/$interface:/a\            macaddress: $new_mac" "$netplan_file"
+                        echo -e "${YELLOW}⚠️  配置已保存，但 netplan apply 失败${NC}"
+                        echo -e "${CYAN}请手动运行: sudo netplan apply${NC}"
+                        return 0
                     fi
                 else
-                    # 添加新接口配置
-                    cat >> "$netplan_file" << EOF
-
-$interface:
-    macaddress: $new_mac
-EOF
+                    echo -e "${RED}✗ YAML 修改失败${NC}"
+                    cp "$backup_file" "$netplan_file"
+                    return 1
                 fi
+            else
+                echo -e "${YELLOW}✗ 需要 python3 来修改 YAML 文件${NC}"
+                echo -e "${CYAN}请手动编辑: $netplan_file${NC}"
+                echo -e "${CYAN}在对应接口下添加: macaddress: $new_mac${NC}"
+                cp "$backup_file" "$netplan_file"
+                return 1
+            fi
+            ;;
 
-                netplan apply
-                log "netplan: 已更新 $netplan_file"
-                echo -e "${GREEN}✓ 已永久保存 (netplan)${NC}"
+        *)
+            echo -e "${YELLOW}✗ 未知的网络管理方式: $manager${NC}"
+            echo ""
+            echo "请手动配置 MAC 地址持久化："
+            echo "  • NetworkManager: nmcli connection modify '<name>' ethernet.cloned-mac-address $new_mac"
+            echo "  • systemd-networkd: 创建 /etc/systemd/network/*.link 文件"
+            echo "  • ifupdown: 编辑 /etc/network/interfaces，添加 'hwaddress ether $new_mac'"
+            echo "  • Netplan: 编辑 /etc/netplan/*.yaml，添加 'macaddress: $new_mac'"
+            return 1
+            ;;
+    esac
+}
+
+# 验证永久保存配置
+verify_permanent_config() {
+    local interface=$1
+    local expected_mac=$2
+    local manager=$(detect_network_manager)
+
+    echo -e "${CYAN}正在验证永久保存配置...${NC}"
+
+    case "$manager" in
+        networkmanager)
+            local conn_name=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep ":$interface$" | head -1 | cut -d: -f1)
+            if [ -n "$conn_name" ]; then
+                local configured_mac=$(nmcli -g connection.ethernet.cloned-mac-address connection show "$conn_name" 2>/dev/null)
+                if [ "$configured_mac" = "$expected_mac" ]; then
+                    echo -e "${GREEN}✓ NetworkManager 配置正确${NC}"
+                    echo "  连接: $conn_name"
+                    echo "  MAC: $configured_mac"
+                    return 0
+                elif [ "$configured_mac" = "--" ]; then
+                    echo -e "${YELLOW}✗ 未配置永久 MAC${NC}"
+                    return 1
+                else
+                    echo -e "${YELLOW}⚠️  MAC 不匹配: $configured_mac (期望: $expected_mac)${NC}"
+                    return 1
+                fi
+            else
+                echo -e "${YELLOW}✗ 无法找到连接${NC}"
+                return 1
+            fi
+            ;;
+
+        systemd-networkd)
+            local link_file="/etc/systemd/network/10-persistent-$interface.link"
+            if [ -f "$link_file" ]; then
+                local configured_mac=$(grep "^MACAddress=" "$link_file" | cut -d= -f2)
+                if [ "$configured_mac" = "$expected_mac" ]; then
+                    echo -e "${GREEN}✓ systemd-networkd 配置正确${NC}"
+                    echo "  文件: $link_file"
+                    echo "  MAC: $configured_mac"
+                    echo -e "${YELLOW}⚠️  需要重启生效${NC}"
+                    return 0
+                else
+                    echo -e "${YELLOW}⚠️  MAC 不匹配: $configured_mac (期望: $expected_mac)${NC}"
+                    return 1
+                fi
+            else
+                echo -e "${YELLOW}✗ 配置文件不存在: $link_file${NC}"
+                return 1
+            fi
+            ;;
+
+        ifupdown)
+            if grep -A 10 "^iface $interface " /etc/network/interfaces 2>/dev/null | grep -q "hwaddress ether $expected_mac"; then
+                echo -e "${GREEN}✓ ifupdown 配置正确${NC}"
+                echo "  文件: /etc/network/interfaces"
+                echo "  MAC: $expected_mac"
+                echo -e "${YELLOW}⚠️  需要重启网络生效${NC}"
                 return 0
+            else
+                echo -e "${YELLOW}✗ 未在配置文件中找到 MAC 地址${NC}"
+                return 1
+            fi
+            ;;
+
+        netplan)
+            local netplan_file=$(ls /etc/netplan/*.yaml 2>/dev/null | head -1)
+            if [ -n "$netplan_file" ]; then
+                if grep -A 5 "$interface:" "$netplan_file" | grep -q "macaddress: $expected_mac"; then
+                    echo -e "${GREEN}✓ Netplan 配置正确${NC}"
+                    echo "  文件: $netplan_file"
+                    echo "  MAC: $expected_mac"
+                    return 0
+                else
+                    echo -e "${YELLOW}✗ 未在配置文件中找到 MAC 地址${NC}"
+                    return 1
+                fi
             else
                 echo -e "${YELLOW}✗ 未找到 netplan 配置文件${NC}"
                 return 1
@@ -233,7 +468,6 @@ EOF
 
         *)
             echo -e "${YELLOW}✗ 未知的网络管理方式${NC}"
-            echo "请手动配置 MAC 地址持久化"
             return 1
             ;;
     esac
@@ -875,7 +1109,14 @@ SSH: ssh $(whoami)@${final_ip}
         echo -e "${CYAN}当前修改为临时生效，重启后恢复${NC}"
         read -p "是否永久保存 MAC 地址？(y/N): " save_permanent
         if [ "$save_permanent" = "y" ] || [ "$save_permanent" = "Y" ]; then
-            make_mac_permanent "$interface" "$final_mac"
+            if make_mac_permanent "$interface" "$final_mac"; then
+                echo ""
+                echo -e "${CYAN}正在验证配置...${NC}"
+                verify_permanent_config "$interface" "$final_mac"
+            else
+                echo -e "${RED}✗ 永久保存失败${NC}"
+                echo -e "${YELLOW}当前 MAC 仅本次生效，重启后恢复${NC}"
+            fi
             echo ""
         fi
     fi
@@ -1015,6 +1256,7 @@ ${YELLOW}命令:${NC}
   custom <接口> <MAC>        使用指定 MAC 并通知
   custom-keepip <接口> <MAC> 使用指定 MAC，尝试保持 IP 不变
   scan [网段]                扫描局域网查找本机
+  verify-permanent <接口>    验证永久 MAC 配置是否正确
   notify-test [接口]         测试通知配置（默认 eth0）
 
 ${YELLOW}示例:${NC}
@@ -1023,6 +1265,7 @@ ${YELLOW}示例:${NC}
   sudo $0 custom eth0 90:2E:16:AB:CD:EF        # 指定 MAC
   sudo $0 custom-keepip eth0 90:2E:16:AB:CD:EF # 指定 MAC（保持 IP）
   $0 scan 192.168.70.0/24                      # 扫描查找
+  sudo $0 verify-permanent eth0                # 验证永久 MAC 配置
   sudo $0 notify-test eth0                     # 测试通知
 
 ${YELLOW}配置说明:${NC}
@@ -1245,6 +1488,18 @@ main() {
             ;;
         scan)
             scan_orange_pi "${2:-192.168.1.0/24}" "${3:-90:2E:16}"
+            ;;
+        verify-permanent)
+            if [ -z "$2" ]; then
+                echo "用法: $0 verify-permanent <接口>"
+                exit 1
+            fi
+            local current_mac=$(get_current_mac "$2")
+            if [ -z "$current_mac" ]; then
+                echo -e "${RED}错误: 无法获取接口 $2 的 MAC 地址${NC}"
+                exit 1
+            fi
+            verify_permanent_config "$2" "$current_mac"
             ;;
         notify-test)
             test_notification "${2:-eth0}"
