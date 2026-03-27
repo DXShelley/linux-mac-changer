@@ -7,7 +7,7 @@
 ![Shell](https://img.shields.io/badge/Shell-Bash-black?logo=gnu-bash&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.6+-blue?logo=python&logoColor=white)
 
-> English version: [README.md](./README.md)
+>  [English Version](./README.md)
 
 ## ✨ 功能特性
 
