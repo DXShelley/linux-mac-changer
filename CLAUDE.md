@@ -1,5 +1,35 @@
 # 项目注意事项
 
+## 开发流程
+
+### 分支管理规则
+
+1. **每次修改前默认切换到 develop 分支**
+2. **提交并推送到 develop 远程分支**
+3. **由用户确认是否合并到 main 分支**
+
+### 操作步骤
+
+```bash
+# 1. 切换到 develop 分支
+git checkout develop
+
+# 2. 进行代码修改...
+
+# 3. 提交修改
+git add <修改的文件>
+git commit -m "描述"
+
+# 4. 推送到 develop
+git push origin develop
+
+# 5. 用户确认后，切换到 main 并合并所需文件
+git checkout main
+git checkout develop -- <文件路径>
+git commit -m "merge: ..."
+git push
+```
+
 ## 跨平台开发注意事项
 
 ### 换行符问题
