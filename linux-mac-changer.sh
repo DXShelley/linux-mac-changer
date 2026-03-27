@@ -128,11 +128,14 @@ check_system() {
         has_wget=true
     fi
 
-    # 如果使用 URL/Telegram 通知，需要 HTTP 客户端
+    # 如果使用 URL/Telegram 通知，需要 HTTP 客户端（改为警告）
     if [ "$NOTIFY_METHOD" = "url" ] || [ "$NOTIFY_METHOD" = "telegram" ] || [ "$NOTIFY_METHOD" = "all" ]; then
         if [ "$has_curl" = false ] && [ "$has_wget" = false ]; then
-            echo -e "${RED}错误: NOTIFY_METHOD='$NOTIFY_METHOD' 需要 curl 或 wget${NC}"
-            errors=$((errors + 1))
+            echo -e "${YELLOW}警告: NOTIFY_METHOD='$NOTIFY_METHOD' 需要 curl 或 wget，但未找到${NC}"
+            echo -e "${YELLOW}通知功能将不可用，但 MAC 修改功能正常${NC}"
+            # 自动回退到 localfile 模式
+            NOTIFY_METHOD="localfile"
+            echo -e "${CYAN}已自动切换到 localfile 通知模式${NC}"
         fi
     fi
 
@@ -885,7 +888,13 @@ notify_url() {
 
     if [ -z "$REMOTE_NOTIFY_URL" ]; then
         log "未配置 REMOTE_NOTIFY_URL，跳过 URL 通知"
-        return
+        return 0
+    fi
+
+    # 检查是否有可用的 HTTP 客户端
+    if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
+        log "URL 通知跳过：缺少 curl 或 wget"
+        return 0
     fi
 
     # 构建 JSON 数据
@@ -910,7 +919,7 @@ notify_url() {
     if command -v curl &>/dev/null; then
         local response=$(curl -s -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
             -H "Content-Type: application/json" \
-            -d "$json_data" 2>&1)
+            -d "$json_data" 2>&1) || true
         local http_code=$(echo "$response" | tail -n1)
         local body=$(echo "$response" | head -n-1)
 
@@ -918,19 +927,19 @@ notify_url() {
             log "URL 通知成功: $body"
         else
             log "URL 通知失败 (HTTP $http_code): $body"
-            log "发送的数据: $json_data"
         fi
     elif command -v wget &>/dev/null; then
         local response=$(wget -q -O- --post-data="$json_data" \
             --header="Content-Type: application/json" \
-            "$REMOTE_NOTIFY_URL" 2>&1)
+            "$REMOTE_NOTIFY_URL" 2>&1) || true
         if [ $? -eq 0 ]; then
             log "URL 通知成功: $response"
         else
-            log "URL 通知失败: $response"
-            log "发送的数据: $json_data"
+            log "URL 通知失败"
         fi
     fi
+
+    return 0
 }
 
 # 发送通知到 Telegram
@@ -939,38 +948,57 @@ notify_telegram() {
 
     if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
         log "未配置 Telegram，跳过 Telegram 通知"
-        return
+        return 0
+    fi
+
+    # 检查是否有可用的 HTTP 客户端
+    if ! command -v curl &>/dev/null; then
+        log "Telegram 通知跳过：缺少 curl"
+        return 0
     fi
 
     local escaped_message=$(echo "$message" | sed 's/&/\%26/g' | sed 's/=/\%3D/g')
 
-    if command -v curl &>/dev/null; then
-        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="$escaped_message" &>/dev/null && log "Telegram 通知成功" || log "Telegram 通知失败"
+    if curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d chat_id="${TELEGRAM_CHAT_ID}" \
+        -d text="$escaped_message" &>/dev/null; then
+        log "Telegram 通知成功"
+    else
+        log "Telegram 通知失败"
     fi
+
+    return 0
 }
 
 # 发送所有通知
 send_notification() {
     local message=$1
 
-    case "$NOTIFY_METHOD" in
-        localfile)
-            notify_localfile "$message"
-            ;;
-        url)
-            notify_url "$message"
-            ;;
-        telegram)
-            notify_telegram "$message"
-            ;;
-        all)
-            notify_localfile "$message"
-            notify_url "$message"
-            notify_telegram "$message"
-            ;;
-    esac
+    # 使用子shell确保通知失败不影响主流程
+    (
+        case "$NOTIFY_METHOD" in
+            localfile)
+                notify_localfile "$message"
+                ;;
+            url)
+                notify_url "$message"
+                ;;
+            telegram)
+                notify_telegram "$message"
+                ;;
+            all)
+                notify_localfile "$message"
+                notify_url "$message"
+                notify_telegram "$message"
+                ;;
+            *)
+                # 如果通知方法未设置，默认使用 localfile
+                notify_localfile "$message"
+                ;;
+        esac
+    ) || true
+
+    return 0
 }
 
 # 等待网络恢复
@@ -1572,21 +1600,22 @@ SSH: ssh $(whoami)@${final_ip}
         echo "========================================"
     } > /tmp/new_ip.txt
 
-    if [ -n "$REMOTE_NOTIFY_URL" ]; then
-        local response=$(curl -s -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
-            -H "Content-Type: application/json" \
-            -d "$json_data" 2>&1)
-        local http_code=$(echo "$response" | tail -n1)
-        local body=$(echo "$response" | head -n-1)
+    # 发送通知（使用 send_notification 函数，确保失败不影响主流程）
+    if [ -n "$REMOTE_NOTIFY_URL" ] && command -v curl &>/dev/null; then
+        (
+            local response=$(curl -s -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
+                -H "Content-Type: application/json" \
+                -d "$json_data" 2>&1) || true
+            local http_code=$(echo "$response" | tail -n1)
+            local body=$(echo "$response" | head -n-1)
 
-        if [ "$http_code" = "200" ]; then
-            log "通知发送成功: $body"
-            # 创建标志文件，告诉监控脚本不需要再发送
-            touch /tmp/mac_notify_sent
-        else
-            log "通知发送失败 (HTTP $http_code): $body"
-            # 发送失败，监控脚本会作为备份重试
-        fi
+            if [ "$http_code" = "200" ]; then
+                log "通知发送成功: $body"
+                touch /tmp/mac_notify_sent
+            else
+                log "通知发送失败 (HTTP $http_code): $body"
+            fi
+        ) || true
     fi
 
     echo "详细日志: /tmp/mac_change.log"
