@@ -1115,14 +1115,14 @@ wait_for_network() {
     return 1
 }
 
-# 修改 MAC 并保持连接
+# 修改 MAC 并保证联网（使用三重策略）
 change_mac_with_notification() {
     local interface=$1
     local use_random=${2:-true}
     local specific_mac=$3
 
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${BLUE}  远程安全 MAC 修改${NC}"
+    echo -e "${BLUE}  MAC 修改并保证联网${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo ""
 
@@ -1141,17 +1141,41 @@ change_mac_with_notification() {
     # 获取当前信息
     local original_ip=$(get_current_ip "$interface")
     local original_mac=$(get_current_mac "$interface")
+    local original_gateway=$(ip route | grep default | awk '{print $3}')
+    local original_netmask=$(ip -4 addr show "$interface" | grep inet | awk '{print $2}' | cut -d'/' -f2)
 
     echo "接口: $interface"
     echo "当前 IP: $original_ip"
     echo "当前 MAC: $original_mac"
+    [ -n "$original_gateway" ] && echo "当前网关: $original_gateway"
     echo ""
+
+    # 如果没有原始IP，先尝试获取一个
+    if [ -z "$original_ip" ]; then
+        echo -e "${YELLOW}当前无IP地址，先尝试获取...${NC}"
+        if command -v dhclient &>/dev/null; then
+            dhclient "$interface" &>/dev/null || true
+            sleep 3
+            original_ip=$(get_current_ip "$interface")
+            original_gateway=$(ip route | grep default | awk '{print $3}')
+            original_netmask=$(ip -4 addr show "$interface" | grep inet | awk '{print $2}' | cut -d'/' -f2)
+        fi
+
+        if [ -z "$original_ip" ]; then
+            echo -e "${RED}警告: 无法获取初始IP地址${NC}"
+            echo -e "${YELLOW}将尝试修改MAC后获取新IP${NC}"
+        else
+            echo -e "${GREEN}✓ 获取到IP: $original_ip${NC}"
+            echo ""
+        fi
+    fi
 
     # 发送修改前通知
     local pre_message="即将修改 $interface MAC 地址
-原始 IP: $original_ip
-原始 MAC: $original_mac
-连接将中断，请等待通知..."
+原始 IP: ${original_ip:-无}
+原始 MAC: $original_mac"
+    [ -n "$original_gateway" ] && pre_message="$pre_message
+网关: $original_gateway"
 
     send_notification "$pre_message"
 
@@ -1177,10 +1201,10 @@ change_mac_with_notification() {
 
     echo ""
     echo -e "${CYAN}新 MAC: $new_mac${NC}"
-    echo -e "${YELLOW}正在修改...${NC}"
+    echo -e "${YELLOW}正在修改并保证联网...${NC}"
     echo ""
 
-    # 创建恢复脚本（以防失败）
+    # 创建恢复脚本
     cat > /tmp/restore_mac.sh << EOFRESTORE
 #!/bin/bash
 ip link set $interface down
@@ -1190,141 +1214,222 @@ dhclient $interface 2>/dev/null || true
 EOFRESTORE
     chmod +x /tmp/restore_mac.sh
 
-    # 创建监控脚本（后台运行）
-    cat > /tmp/monitor_new_ip.sh << EOFMONITOR
-#!/bin/bash
-
-INTERFACE="$interface"
-ORIGINAL_MAC="$original_mac"
-NEW_MAC="$new_mac"
-LOG_FILE="/tmp/mac_change.log"
-REMOTE_NOTIFY_URL="$REMOTE_NOTIFY_URL"
-TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
-NOTIFY_METHOD="$NOTIFY_METHOD"
-
-# 等待 IP
-for i in {1..30}; do
-    sleep 1
-    NEW_IP=\$(ip -4 addr show \$INTERFACE | grep inet | awk '{print \$2}' | cut -d'/' -f1)
-
-    if [ -n "\$NEW_IP" ]; then
-        # 找到新 IP
-        message="Linux MAC 修改完成
-
-主机: \$(hostname)
-接口: \$INTERFACE
-原始 MAC: \$ORIGINAL_MAC
-新 MAC: \$NEW_MAC
-新 IP: \$NEW_IP
-SSH: ssh \$(whoami)@\${NEW_IP}
-
-时间: \$(date)"
-
-        echo "\$message" >> /tmp/new_ip.txt
-        echo "\$message" >> \$LOG_FILE
-
-        # 发送通知
-EOFMONITOR
-
-    # 添加通知方法到监控脚本
-    if [ "$NOTIFY_METHOD" = "localfile" ] || [ "$NOTIFY_METHOD" = "all" ]; then
-        cat >> /tmp/monitor_new_ip.sh << EOFMONITOR
-        echo "\$message" > /tmp/new_ip.txt
-EOFMONITOR
-    fi
-
-    if [ -n "$REMOTE_NOTIFY_URL" ] && [ "$NOTIFY_METHOD" = "url" -o "$NOTIFY_METHOD" = "all" ]; then
-        cat >> /tmp/monitor_new_ip.sh << 'EOFMONITOR'
-        # 发送 URL 通知 - 安全转义 JSON
-        hostname=$(hostname)
-        timestamp=$(date -Iseconds)
-
-        # 优先使用 jq，否则使用手动转义
-        if command -v jq &>/dev/null; then
-            json_data=$(jq -n \
-                --arg hn "$hostname" \
-                --arg msg "$message" \
-                --arg ip "$NEW_IP" \
-                --arg ts "$timestamp" \
-                '{hostname: $hn, message: $msg, ip: $ip, timestamp: $ts}')
-        else
-            escaped_msg=$(printf '%s' "$message" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{printf "%s\\n", $0}' | tr -d '\n')
-            json_data="{\"hostname\":\"$hostname\",\"message\":\"$escaped_msg\",\"ip\":\"$NEW_IP\",\"timestamp\":\"$timestamp\"}"
-        fi
-
-        response=$(curl -s -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
-            -H "Content-Type: application/json" \
-            -d "$json_data" 2>&1)
-        http_code=$(echo "$response" | tail -n1)
-        if [ "$http_code" = "200" ]; then
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] URL 通知成功" >> $LOG_FILE
-        else
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] URL 通知失败 (HTTP $http_code)" >> $LOG_FILE
-        fi
-EOFMONITOR
-    fi
-
-    if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ "$NOTIFY_METHOD" = "telegram" -o "$NOTIFY_METHOD" = "all" ]; then
-        cat >> /tmp/monitor_new_ip.sh << EOFMONITOR
-        escaped_msg=\$(echo "\$message" | sed 's/&/\%26/g')
-        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \\
-            -d chat_id="${TELEGRAM_CHAT_ID}" \\
-            -d text="\$escaped_msg" &>/dev/null || true
-EOFMONITOR
-    fi
-
-    cat >> /tmp/monitor_new_ip.sh << 'EOFMONITOR'
-
-        exit 0
-    fi
-done
-
-# 超时
-echo "警告: 30秒内未获取到 IP 地址" >> /tmp/new_ip.txt
-echo "请使用以下命令检查:" >> /tmp/new_ip.txt
-echo "  arp -a | grep $interface" >> /tmp/new_ip.txt
-echo "  或在路由器查看 DHCP 列表" >> /tmp/new_ip.txt
-
-exit 1
-EOFMONITOR
-
-    chmod +x /tmp/monitor_new_ip.sh
-
-    # 启动监控脚本（后台）
-    nohup /tmp/monitor_new_ip.sh &>/dev/null &
-    MONITOR_PID=$!
-    echo "监控进程 PID: $MONITOR_PID"
-    echo ""
-
-    # 执行 MAC 修改
+    # 修改 MAC 地址
     ip link set "$interface" down
     ip link set "$interface" address "$new_mac"
     ip link set "$interface" up
 
-    # 释放并重新获取 IP
+    local final_ip=""
+    local ip_obtained=false
+
+    # 策略 1: 尝试通过 DHCP 获取任意IP（最多10秒）
+    echo -e "${CYAN}[1/2] 尝试 DHCP 获取IP...${NC}"
     if command -v dhclient &>/dev/null; then
-        dhclient -r "$interface" &>/dev/null || true
+        # 清理可能残留的 dhclient
+        killall dhclient &>/dev/null || true
+        sleep 1
+
+        # 使用 DHCP 获取 IP
         dhclient "$interface" &>/dev/null || true
+
+        # 等待 IP 分配（最多 10 秒）
+        local wait_count=0
+        while [ $wait_count -lt 10 ]; do
+            sleep 1
+            final_ip=$(get_current_ip "$interface")
+            if [ -n "$final_ip" ]; then
+                echo -e "${GREEN}✓ 获取到 IP: $final_ip${NC}"
+                ip_obtained=true
+                break
+            fi
+            echo -n "."
+            wait_count=$((wait_count + 1))
+        done
+
+        if [ $wait_count -ge 10 ]; then
+            echo ""
+            echo -e "${YELLOW}✗ DHCP 超时${NC}"
+        fi
+    else
+        echo -e "${YELLOW}✗ dhclient 不可用${NC}"
     fi
 
-    echo -e "${GREEN}✓ MAC 已修改为: $new_mac${NC}"
-    echo -e "${YELLOW}✗ SSH 连接将中断${NC}"
-    echo ""
-    echo "========================================"
-    echo "连接中断后，请通过以下方式获取新 IP:"
-    echo ""
-    echo "1. 查看通知（如果配置了 URL/Telegram）"
-    echo "2. 在局域网其他设备上运行:"
-    echo "   sudo nmap -sP $SCAN_NETWORK"
-    echo ""
-    echo "3. 在路由器查看 DHCP 客户端列表"
-    echo "4. 5分钟后重新扫描:"
-    echo "   for i in {1..254}; do ping -c 1 -W 1 192.168.1.\$i & done; arp -a | grep 90:2E:16"
-    echo "========================================"
+    # 策略 2: 如果DHCP失败，尝试手动配置（仅当有原始IP信息时）
+    if [ "$ip_obtained" = false ] && [ -n "$original_ip" ] && [ -n "$original_gateway" ]; then
+        echo -e "${CYAN}[2/2] 尝试手动配置IP...${NC}"
 
-    # 等待一小会儿再断开
-    sleep 2
+        # 检测IP是否被占用
+        local ip_in_use=false
+        if command -v arping &>/dev/null; then
+            if arping -c 1 -w 1 "$original_ip" &>/dev/null; then
+                ip_in_use=true
+            fi
+        fi
+
+        if [ "$ip_in_use" = true ]; then
+            echo -e "${YELLOW}✗ 原IP已被占用，无法使用${NC}"
+        else
+            # 设置静态IP
+            ip addr flush dev "$interface"
+            local netmask="${original_netmask:-24}"
+            ip addr add "${original_ip}/${netmask}" dev "$interface" 2>/dev/null || true
+            ip route add default via "$original_gateway" dev "$interface" 2>/dev/null || true
+
+            sleep 2
+            final_ip=$(get_current_ip "$interface")
+
+            if [ -n "$final_ip" ]; then
+                # 测试网络连通性
+                if ping -c 1 -W 2 "$original_gateway" &>/dev/null; then
+                    echo -e "${GREEN}✓ 手动配置成功: $final_ip${NC}"
+                    ip_obtained=true
+                else
+                    echo -e "${YELLOW}✗ 配置成功但网络不通${NC}"
+                    # 清理静态IP
+                    ip addr flush dev "$interface"
+                fi
+            else
+                echo -e "${YELLOW}✗ 手动配置失败${NC}"
+            fi
+        fi
+    fi
+
+    # 最终状态检查
+    local final_mac=$(get_current_mac "$interface")
+
+    echo ""
+    echo "========================================"
+    echo -e "${BLUE}修改完成${NC}"
+    echo "========================================"
+    echo "原始 MAC: $original_mac"
+    echo "新 MAC:   $final_mac"
+    echo "原始 IP:  ${original_ip:-无}"
+    echo "当前 IP:  ${final_ip:-未获取到}"
+
+    # 构建通知消息
+    local notify_message=""
+    local status=""
+
+    if [ -z "$final_ip" ]; then
+        echo -e "${RED}状态: ✗ 未获取到IP地址${NC}"
+        echo ""
+        echo -e "${RED}⚠️  网络可能不可用！${NC}"
+        echo -e "${YELLOW}请检查：${NC}"
+        echo "1. 网络连接是否正常"
+        echo "2. 运行: cat /tmp/mac_change.log"
+        echo "3. 手动配置: ip addr add <IP>/<mask> dev $interface"
+        echo ""
+        status="no_ip"
+        notify_message="Linux MAC 修改完成（未获取到IP）
+
+主机: $(hostname)
+接口: $interface
+原始 MAC: $original_mac
+新 MAC: $final_mac
+⚠️ 警告: 未获取到IP地址
+
+时间: $(date)"
+    else
+        echo -e "${GREEN}状态: ✓ 已获取IP${NC}"
+        echo ""
+        echo -e "${GREEN}新 SSH 连接: ssh $(whoami)@$final_ip${NC}"
+
+        if [ "$final_ip" = "$original_ip" ]; then
+            status="ip_unchanged"
+        else
+            status="ip_changed"
+        fi
+
+        notify_message="Linux MAC 修改完成
+
+主机: $(hostname)
+接口: $interface
+原始 MAC: $original_mac
+新 MAC: $final_mac
+${original_ip:+原始 IP: $original_ip
+}新 IP: $final_ip ✓
+
+时间: $(date)"
+    fi
+    echo "========================================"
+    echo ""
+
+    # 询问是否永久保存
+    if [ "$final_mac" != "$original_mac" ] && [ -n "$final_ip" ]; then
+        echo -e "${CYAN}当前修改为临时生效，重启后恢复${NC}"
+        read -p "是否永久保存 MAC 地址？(y/N): " save_permanent
+        if [ "$save_permanent" = "y" ] || [ "$save_permanent" = "Y" ]; then
+            if make_mac_permanent "$interface" "$final_mac"; then
+                echo ""
+                echo -e "${CYAN}正在验证配置...${NC}"
+                verify_permanent_config "$interface" "$final_mac"
+            else
+                echo -e "${RED}✗ 永久保存失败${NC}"
+                echo -e "${YELLOW}当前 MAC 仅本次生效，重启后恢复${NC}"
+            fi
+            echo ""
+        fi
+    fi
+
+    # 发送通知
+    log "发送通知..."
+    (
+        # 方法1: 使用 jq 构建结构化 JSON（推荐）
+        if command -v jq &>/dev/null; then
+            local json_data=$(jq -n \
+                --arg hn "$(hostname)" \
+                --arg st "$status" \
+                --arg iface "$interface" \
+                --arg orig_mac "$original_mac" \
+                --arg new_mac "$final_mac" \
+                --arg orig_ip "${original_ip:-}" \
+                --arg new_ip "${final_ip:-}" \
+                --arg ts "$(date -Iseconds)" \
+                '{
+                    hostname: $hn,
+                    status: $st,
+                    interface: $iface,
+                    mac: {
+                        original: $orig_mac,
+                        new: $new_mac
+                    },
+                    ip: {
+                        original: ($orig_ip // ""),
+                        current: ($new_ip // "")
+                    },
+                    timestamp: $ts
+                }')
+        else
+            # 方法2: 手动构建 JSON（兼容性）
+            local json_data="{\"hostname\":\"$(hostname)\",\"status\":\"$status\",\"interface\":\"$interface\",\"mac\":{\"original\":\"$original_mac\",\"new\":\"$final_mac\"},\"ip\":{\"original\":\"${original_ip:-}\",\"current\":\"${final_ip:-}\"},\"timestamp\":\"$(date -Iseconds)\"}"
+        fi
+
+        # 保存到本地文件
+        echo "$notify_message" > /tmp/new_ip.txt
+
+        # 发送URL通知
+        if [ -n "$REMOTE_NOTIFY_URL" ] && command -v curl &>/dev/null; then
+            local response=$(curl -s -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
+                -H "Content-Type: application/json" \
+                -d "$json_data" 2>&1) || true
+            local http_code=$(echo "$response" | tail -n1)
+            if [ "$http_code" = "200" ]; then
+                log "通知发送成功"
+            else
+                log "通知发送失败 (HTTP $http_code)"
+            fi
+        fi
+    ) || true
+
+    echo "详细日志: /tmp/mac_change.log"
+    [ -n "$final_ip" ] && echo "新IP已保存到: /tmp/new_ip.txt"
+
+    # 如果没有获取到IP，返回错误码
+    if [ -z "$final_ip" ]; then
+        return 1
+    fi
+
+    return 0
 }
 
 # 修改 MAC 并尝试保持 IP 地址
