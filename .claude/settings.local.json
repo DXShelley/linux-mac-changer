@@ -4,7 +4,9 @@
       "Bash(git:*)",
       "Bash(gh repo:*)",
       "Bash(gh api:*)",
-      "Bash(bash:*)"
+      "Bash(bash:*)",
+      "Bash(ls:*)",
+      "Bash(rm:*)"
     ]
   }
 }
