@@ -49,8 +49,17 @@ bash release.sh
 # - 主版本号 +1 (v1.0.0 -> v2.0.0)
 # - 创建 zip 压缩包（不含 CLAUDE.md）
 # - 上传到 GitHub Release
-# - 自动删除本地 zip 文件
+# - 自动删除本地临时文件（zip 压缩包等）
+# - 创建并推送版本标签
 ```
+
+### Release 发版后清理
+
+release.ps1 脚本执行完成后会自动清理以下临时文件：
+
+- **zip 压缩包**：如 `linux-mac-changer-v1.0.0.zip`
+
+清理完成后脚本会自动切换回 develop 分支。
 
 ### 版本号规则
 
@@ -60,11 +69,12 @@ bash release.sh
 
 ### main 分支文件规范
 
-main 分支只包含发布所需文件，共 4 个：
+main 分支只包含发布所需文件，共 5 个：
 
 ```
 LICENSE
 README.md
+README_zh.md
 linux-mac-changer.sh
 notification-server.py
 ```
@@ -77,7 +87,7 @@ notification-server.py
 git checkout main
 
 # 2. 只合并需要的文件
-git checkout develop -- LICENSE README.md linux-mac-changer.sh notification-server.py
+git checkout develop -- LICENSE README.md README_zh.md linux-mac-changer.sh notification-server.py
 
 # 3. 提交并推送
 git add .
