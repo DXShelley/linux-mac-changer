@@ -1110,7 +1110,7 @@ notify_url() {
 
     # 发送 POST 请求
     if command -v curl &>/dev/null; then
-        local response=$(curl -s -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
+        local response=$(curl -s --connect-timeout 5 --max-time 10 -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
             -H "Content-Type: application/json" \
             -d "$json_data" 2>&1) || true
         local http_code=$(echo "$response" | tail -n1)
@@ -1513,7 +1513,7 @@ ${original_ip:+原始 IP: $original_ip
 
         # 发送URL通知
         if [ -n "$REMOTE_NOTIFY_URL" ] && command -v curl &>/dev/null; then
-            local response=$(curl -s -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
+            local response=$(curl -s --connect-timeout 5 --max-time 10 -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
                 -H "Content-Type: application/json" \
                 -d "$json_data" 2>&1) || true
             local http_code=$(echo "$response" | tail -n1)
@@ -1901,7 +1901,7 @@ SSH: ssh $(whoami)@${final_ip}
     # 发送通知（使用 send_notification 函数，确保失败不影响主流程）
     if [ -n "$REMOTE_NOTIFY_URL" ] && command -v curl &>/dev/null; then
         (
-            local response=$(curl -s -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
+            local response=$(curl -s --connect-timeout 5 --max-time 10 -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
                 -H "Content-Type: application/json" \
                 -d "$json_data" 2>&1) || true
             local http_code=$(echo "$response" | tail -n1)
@@ -2035,7 +2035,7 @@ test_notification() {
             json_data="{\"hostname\":\"$hostname\",\"status\":\"test\",\"interface\":\"$interface\",\"mac\":{\"original\":\"$old_mac\",\"new\":\"$new_mac\"},\"ip\":{\"original\":\"$old_ip\",\"current\":\"$new_ip\"},\"gateway\":\"${gateway:-192.168.70.1}\",\"ssh\":\"ssh $current_user@${new_ip}\",\"timestamp\":\"$timestamp\"}"
         fi
 
-        local response=$(curl -s -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
+        local response=$(curl -s --connect-timeout 5 --max-time 10 -w "\n%{http_code}" -X POST "$REMOTE_NOTIFY_URL" \
             -H "Content-Type: application/json" \
             -d "$json_data" 2>&1)
         local http_code=$(echo "$response" | tail -n1)
