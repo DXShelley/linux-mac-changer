@@ -41,12 +41,25 @@
 
 ### 支持的操作系统
 
-- ✅ Debian 8+
-- ✅ Ubuntu 16.04+
-- ✅ Kali Linux
-- ✅ Raspbian / Raspberry Pi OS
-- ✅ Armbian
-- ✅ 其他基于 Debian 的发行版
+| 发行版 | 版本要求 | systemd | 测试状态 |
+|--------|---------|---------|---------|
+| **Debian** | 8+ (Jessie) | 可选 | ✅ 已测试 |
+| **Ubuntu** | 16.04+ | ✅ | ✅ 已测试 |
+| **Kali Linux** | 2020+ | ✅ | ✅ 已测试 |
+| **Raspberry Pi OS** | 10+ (Buster) | ✅ | ✅ 已测试 |
+| **Armbian** | 20.10+ | ✅ | ✅ 已测试 |
+| **Linux Mint** | 18+ | ✅ | ✅ 兼容 |
+| **Pop!_OS** | 20.04+ | ✅ | ✅ 兼容 |
+| **其他 Debian 系** | - | - | ⚠️ 可能兼容 |
+
+**系统要求**:
+- **内核**: Linux 3.0+ (推荐 4.0+)
+- **架构**: amd64, arm64, armhf, i386
+- **初始化系统**: systemd (推荐) 或 sysvinit (部分功能受限)
+
+### 非支持系统
+
+脚本主要针对基于 Debian 的系统。其他发行版（如 Fedora、CentOS、Arch）**未测试**，可能需要修改后使用。
 
 ### 必需依赖
 
@@ -341,6 +354,60 @@ ip route add default via 192.168.70.1 dev eth0
 1. 查看通知服务器输出
 2. 查看 JSON 文件：`cat /tmp/linux_mac_notifications.json`
 3. 扫描局域网：`./linux-mac-changer.sh scan 192.168.70.0/24`
+
+## ⚠️ 系统兼容性限制
+
+### 非 systemd 系统
+
+如果您的系统使用 **sysvinit** 或其他初始化系统（而非 systemd），以下功能可能受限：
+
+| 功能 | systemd 系统 | 非 systemd 系统 |
+|------|-------------|----------------|
+| **修改 MAC** | ✅ 完全支持 | ✅ 完全支持 |
+| **保持 IP** | ✅ 完全支持 | ✅ 完全支持 |
+| **通知** | ✅ 完全支持 | ✅ 完全支持 |
+| **永久保存 - NetworkManager** | ✅ 自动检测 | ✅ 部分支持 |
+| **永久保存 - systemd-networkd** | ✅ 支持 | ❌ 不支持 |
+| **永久保存 - ifupdown** | ✅ 支持 | ✅ 支持 |
+| **永久保存 - Netplan** | ✅ 支持 | ❌ 不支持 |
+
+### 旧版本 Debian (8 Jessie)
+
+Debian 8 默认使用 sysvinit，建议：
+
+1. **升级到 Debian 10+** (推荐)
+2. 或安装 systemd：`sudo apt install systemd`
+3. 永久保存功能使用 **ifupdown** 方式
+
+### 嵌入式系统
+
+某些嵌入式 Linux 发行版可能缺少：
+- `iproute2` (使用旧版 ifconfig)
+- `systemd`
+- 完整的 DHCP 客户端
+
+建议先运行系统检测：
+```bash
+sudo ./linux-mac-changer.sh help  # 显示系统检测
+```
+
+### 兼容性测试
+
+如需在其他系统上测试，请先确认：
+
+```bash
+# 1. 检查必需命令
+which ip grep awk sed dhclient curl
+
+# 2. 检查操作系统
+cat /etc/os-release
+
+# 3. 检查内核版本
+uname -r
+
+# 4. 运行脚本测试
+sudo ./linux-mac-changer.sh notify-test eth0
+```
 
 ## 🤝 贡献
 

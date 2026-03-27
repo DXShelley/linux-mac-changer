@@ -41,13 +41,47 @@ check_system() {
     fi
 
     # 检测操作系统
+    local supported=false
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         OS_NAME="$ID"
         OS_VERSION="$VERSION_ID"
+
+        # 验证是否在支持的发行版列表中
+        case "$ID" in
+            debian|ubuntu|kali|raspbian|armbian|linuxmint|pop)
+                supported=true
+                ;;
+            *)
+                # 检查是否基于 Debian
+                if [ -n "$ID_LIKE" ]; then
+                    for like in $ID_LIKE; do
+                        if [ "$like" = "debian" ]; then
+                            supported=true
+                            break
+                        fi
+                    done
+                fi
+                ;;
+        esac
     else
         OS_NAME="unknown"
         OS_VERSION="unknown"
+        echo -e "${YELLOW}警告: 无法检测操作系统类型${NC}"
+        echo -e "${YELLOW}此脚本主要支持基于 Debian 的系统${NC}"
+    fi
+
+    # 检查内核版本（需要 3.0+ 以支持某些网络功能）
+    local kernel_version=$(uname -r | cut -d. -f1)
+    if [ "$kernel_version" -lt 3 ] 2>/dev/null; then
+        echo -e "${YELLOW}警告: 内核版本过旧 (当前: $(uname -r))${NC}"
+        echo -e "${YELLOW}建议使用内核 3.0 或更高版本${NC}"
+    fi
+
+    # 检查是否有 systemd（影响某些功能）
+    local has_systemd=false
+    if command -v systemctl &>/dev/null; then
+        has_systemd=true
     fi
 
     # 检查必需命令
@@ -58,6 +92,15 @@ check_system() {
             errors=$((errors + 1))
         fi
     done
+
+    # 检查 ip 命令版本（某些旧系统有 ip 但功能不全）
+    if command -v ip &>/dev/null; then
+        if ! ip link show &>/dev/null; then
+            echo -e "${RED}错误: ip 命令功能不完整${NC}"
+            echo -e "${RED}请确保安装了 iproute2 包${NC}"
+            errors=$((errors + 1))
+        fi
+    fi
 
     # 检查 DHCP 客户端（必需，否则修改 MAC 后无法获取 IP）
     local has_dhclient=false
@@ -101,12 +144,24 @@ check_system() {
 
     # 检查 NetworkManager 相关工具（如果使用 NetworkManager）
     local has_nmcli=false
-    if systemctl is-active --quiet NetworkManager 2>/dev/null; then
-        if command -v nmcli &>/dev/null; then
-            has_nmcli=true
-        else
-            echo -e "${YELLOW}警告: 检测到 NetworkManager 但未安装 nmcli${NC}"
-            echo -e "${YELLOW}永久保存功能可能不可用，请安装: apt install network-manager${NC}"
+    local nm_manager_running=false
+    if [ "$has_systemd" = true ]; then
+        if systemctl is-active --quiet NetworkManager 2>/dev/null; then
+            nm_manager_running=true
+            if command -v nmcli &>/dev/null; then
+                has_nmcli=true
+            else
+                echo -e "${YELLOW}警告: 检测到 NetworkManager 但未安装 nmcli${NC}"
+                echo -e "${YELLOW}永久保存功能可能不可用，请安装: apt install network-manager${NC}"
+            fi
+        fi
+    else
+        # 非 systemd 系统，尝试其他方式检测
+        if pgrep -x "NetworkManager" &>/dev/null; then
+            nm_manager_running=true
+            if command -v nmcli &>/dev/null; then
+                has_nmcli=true
+            fi
         fi
     fi
 
@@ -114,7 +169,13 @@ check_system() {
     local has_python3=false
     if [ -d /etc/netplan ]; then
         if command -v python3 &>/dev/null; then
-            has_python3=true
+            # 检查是否有 PyYAML
+            if python3 -c "import yaml" 2>/dev/null; then
+                has_python3=true
+            else
+                echo -e "${YELLOW}警告: python3 已安装但缺少 yaml 模块${NC}"
+                echo -e "${YELLOW}请安装: apt install python3-yaml${NC}"
+            fi
         else
             echo -e "${YELLOW}警告: 检测到 Netplan 但未安装 python3${NC}"
             echo -e "${YELLOW}永久保存功能将需要手动配置 YAML 文件${NC}"
@@ -131,6 +192,17 @@ check_system() {
         elif [ "$has_wget" = true ]; then
             log "HTTP: wget 可用"
         fi
+
+        # 显示额外信息
+        if [ "$has_systemd" = false ]; then
+            log "提示: 非 systemd 系统，某些功能可能受限"
+        fi
+
+        # 支持的发行版提示
+        if [ "$supported" = false ] && [ "$OS_NAME" != "unknown" ]; then
+            echo -e "${YELLOW}提示: $OS_NAME 可能未在测试列表中${NC}"
+            echo -e "${YELLOW}如遇问题请报告: https://github.com/DXShelley/linux-mac-changer/issues${NC}"
+        fi
     else
         echo -e "${RED}系统检测失败，请安装缺少的依赖${NC}"
         exit 1
@@ -144,17 +216,43 @@ log() {
 
 # 检测网络管理方式
 detect_network_manager() {
-    if systemctl is-active --quiet NetworkManager; then
-        echo "networkmanager"
-    elif systemctl is-active --quiet systemd-networkd; then
-        echo "systemd-networkd"
-    elif [ -f /etc/network/interfaces ]; then
-        echo "ifupdown"
-    elif [ -d /etc/netplan ]; then
-        echo "netplan"
+    # 1. 检查 NetworkManager（最常用）
+    if command -v systemctl &>/dev/null; then
+        # systemd 系统
+        if systemctl is-active --quiet NetworkManager 2>/dev/null; then
+            echo "networkmanager"
+            return 0
+        fi
+        if systemctl is-active --quiet systemd-networkd 2>/dev/null; then
+            echo "systemd-networkd"
+            return 0
+        fi
     else
-        echo "unknown"
+        # 非 systemd 系统，尝试其他方式检测
+        if pgrep -x "NetworkManager" &>/dev/null || pgrep -x "networkmanager" &>/dev/null; then
+            echo "networkmanager"
+            return 0
+        fi
     fi
+
+    # 2. 检查 Netplan（Ubuntu 18.04+）
+    if [ -d /etc/netplan ] && [ -f /etc/netplan/*.yaml ]; then
+        echo "netplan"
+        return 0
+    fi
+
+    # 3. 检查 ifupdown（传统 Debian/Ubuntu）
+    if [ -f /etc/network/interfaces ]; then
+        # 检查是否有实际的配置（不只是注释）
+        if grep -q "^iface" /etc/network/interfaces 2>/dev/null; then
+            echo "ifupdown"
+            return 0
+        fi
+    fi
+
+    # 4. 无法确定
+    echo "unknown"
+    return 1
 }
 
 # 永久保存 MAC 地址
@@ -280,7 +378,14 @@ EOF
                     mv /tmp/interfaces.tmp /etc/network/interfaces
                     log "ifupdown: 已添加 MAC 到 /etc/network/interfaces"
                     echo -e "${GREEN}✓ 已永久保存 (ifupdown)${NC}"
-                    echo -e "${YELLOW}⚠️  需要重启网络: systemctl restart networking${NC}"
+                    # 根据系统类型提供不同的重启命令
+                    if command -v systemctl &>/dev/null && systemctl --version &>/dev/null; then
+                        echo -e "${YELLOW}⚠️  需要重启网络: systemctl restart networking${NC}"
+                    elif [ -f /etc/init.d/networking ]; then
+                        echo -e "${YELLOW}⚠️  需要重启网络: service networking restart${NC}"
+                    else
+                        echo -e "${YELLOW}⚠️  需要重启网络: ifdown $interface && ifup $interface${NC}"
+                    fi
                     echo -e "${CYAN}备份文件: $backup_file${NC}"
                     return 0
                 else
@@ -1321,13 +1426,14 @@ ${YELLOW}保持 IP 模式（-keepip）:${NC}
 
 ${YELLOW}永久保存 MAC 地址:${NC}
   修改完成后会询问是否永久保存，支持以下方式:
-  - NetworkManager: nmcli 命令配置
-  - systemd-networkd: 创建 .link 文件
-  - ifupdown: 修改 /etc/network/interfaces
-  - Netplan: 更新 .yaml 配置
+  - NetworkManager: nmcli 命令配置 (需要 systemd)
+  - systemd-networkd: 创建 .link 文件 (需要 systemd)
+  - ifupdown: 修改 /etc/network/interfaces (兼容非 systemd)
+  - Netplan: 更新 .yaml 配置 (需要 systemd + python3-yaml)
 
 ${YELLOW}系统要求:${NC}
-  - 操作系统: Debian/Ubuntu/Kali 等 Linux 发行版
+  - 操作系统: Debian 8+, Ubuntu 16.04+, Kali, Raspberry Pi OS 等
+  - 内核版本: Linux 3.0+ (推荐 4.0+)
   - 权限: root (sudo)
 
   - 必需命令:
@@ -1337,6 +1443,12 @@ ${YELLOW}系统要求:${NC}
 
   - 可选命令:
     • jq (JSON 处理，未安装时使用备用方案)
+    • python3-yaml (Netplan 永久保存需要)
+
+${YELLOW}系统兼容性:${NC}
+  - systemd 系统: 完全支持所有功能
+  - 非 systemd 系统: MAC 修改功能正常，永久保存使用 ifupdown
+  - 旧系统 (Debian 8): 建议安装 systemd 或仅使用临时修改
 
 EOF
 }
