@@ -58,6 +58,33 @@ bash release.sh
 - 默认递增 MAJOR 版本号
 - 手动指定版本：运行脚本时输入具体版本号
 
+### main 分支文件规范
+
+main 分支只包含发布所需文件，共 4 个：
+
+```
+LICENSE
+README.md
+linux-mac-changer.sh
+notification-server.py
+```
+
+**禁止添加其他文件**，如需更新请在 develop 分支操作后手动合并。
+
+合并到 main 时操作步骤：
+```bash
+# 1. 切换到 main
+git checkout main
+
+# 2. 只合并需要的文件
+git checkout develop -- LICENSE README.md linux-mac-changer.sh notification-server.py
+
+# 3. 提交并推送
+git add .
+git commit -m "release: 更新文件"
+git push
+```
+
 ## 跨平台开发注意事项
 
 ### 换行符问题
