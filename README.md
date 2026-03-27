@@ -7,7 +7,7 @@
 ![Shell](https://img.shields.io/badge/Shell-Bash-black?logo=gnu-bash&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.6+-blue?logo=python&logoColor=white)
 
-> 中文版：[README_zh.md](./README_zh.md)
+> [中文版](./README_zh.md)
 
 ## Features
 
@@ -267,7 +267,7 @@ Using `ip link set address` to change MAC is **temporary** and will revert after
 
 ### Script Auto-Handled
 
-After modification, script will ask if you want to永久保存:
+After modification, script will ask if you want to permanently save:
 
 ```bash
 ========================================
@@ -285,10 +285,10 @@ Permanently save MAC address? (y/N): y
 
 | Method | Description | Immediate |
 |--------|-------------|-----------|
-| **NetworkManager** | Use nmcli config | ✅ |
-| **systemd-networkd** | Create .link file | ❌ (needs reboot) |
+| **NetworkManager** | Use nmcli config | Yes |
+| **systemd-networkd** | Create .link file | No (needs reboot) |
 | **ifupdown** | Modify /etc/network/interfaces | Partial |
-| **Netplan** | Update .yaml config | ✅ |
+| **Netplan** | Update .yaml config | Yes |
 
 ## Development
 
@@ -298,18 +298,19 @@ Permanently save MAC address? (y/N): y
 linux-mac-changer/
 ├── linux-mac-changer.sh      # Main script
 ├── notification-server.py     # Notification server
-├── README.md                   # Project documentation
-├── LICENSE                     # MIT License
-└── .gitignore                 # Git ignore file
+├── README.md                 # Project documentation (English)
+├── README_zh.md              # Project documentation (Chinese)
+├── LICENSE                   # MIT License
+└── .gitignore               # Git ignore file
 ```
 
 ### System Detection
 
 Script auto-detects before running:
-- ✅ OS type and version
-- ✅ Required commands (ip, grep, awk, sed)
-- ✅ Optional commands (dhclient, jq, curl)
-- ✅ Root permission check
+- OS type and version
+- Required commands (ip, grep, awk, sed)
+- Optional commands (dhclient, jq, curl)
+- Root permission check
 
 ### Code Standards
 
@@ -355,13 +356,13 @@ If your system uses **sysvinit** or other init systems (not systemd), some featu
 
 | Feature | systemd | Non-systemd |
 |---------|---------|-------------|
-| **Change MAC** | ✅ Full | ✅ Full |
-| **Keep IP** | ✅ Full | ✅ Full |
-| **Notification** | ✅ Full | ✅ Full |
-| **Permanent Save - NetworkManager** | ✅ Auto | ✅ Partial |
-| **Permanent Save - systemd-networkd** | ✅ Support | ❌ Not support |
-| **Permanent Save - ifupdown** | ✅ Support | ✅ Support |
-| **Permanent Save - Netplan** | ✅ Support | ❌ Not support |
+| **Change MAC** | Full | Full |
+| **Keep IP** | Full | Full |
+| **Notification** | Full | Full |
+| **Permanent Save - NetworkManager** | Auto | Partial |
+| **Permanent Save - systemd-networkd** | Support | Not support |
+| **Permanent Save - ifupdown** | Support | Support |
+| **Permanent Save - Netplan** | Support | Not support |
 
 ### Old Debian (8 Jessie)
 
@@ -418,6 +419,6 @@ This project is licensed under MIT License - see [LICENSE](LICENSE) file for det
 
 <div align="center">
 
-**⭐ If this project helps you, please give a Star!**
+**If this project helps you, please give a Star!**
 
 </div>
