@@ -46,7 +46,7 @@ Thumbs.db
 *.backup
 
 # Claude Code
-.claude/
+# .claude/  # 已移除此规则，允许提交.claude目录
 .memory/
 
 # Notifications
