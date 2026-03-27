@@ -1048,10 +1048,10 @@ verify_permanent_config() {
     esac
 }
 
-# 获取当前 IP
+# 获取当前 IP（只返回第一个IPv4地址）
 get_current_ip() {
     local interface=$1
-    ip -4 addr show "$interface" | grep inet | awk '{print $2}' | cut -d'/' -f1
+    ip -4 addr show "$interface" | grep inet | awk '{print $2}' | cut -d'/' -f1 | head -n1
 }
 
 # 获取当前 MAC
