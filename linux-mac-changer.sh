@@ -201,6 +201,95 @@ check_system() {
             log "提示: 非 systemd 系统，某些功能可能受限"
         fi
 
+        # 检查通知功能是否可用
+        local notification_available=false
+        local notification_method=""
+
+        if [ "$NOTIFY_METHOD" = "localfile" ]; then
+            # localfile 模式始终可用
+            notification_available=true
+            notification_method="本地文件 ($LOCAL_NOTIFY_FILE)"
+        elif [ "$NOTIFY_METHOD" = "url" ] || [ "$NOTIFY_METHOD" = "all" ]; then
+            if [ -n "$REMOTE_NOTIFY_URL" ]; then
+                if [ "$has_curl" = true ] || [ "$has_wget" = true ]; then
+                    notification_available=true
+                    notification_method="URL 通知 ($REMOTE_NOTIFY_URL)"
+                fi
+            fi
+        elif [ "$NOTIFY_METHOD" = "telegram" ]; then
+            if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+                if [ "$has_curl" = true ]; then
+                    notification_available=true
+                    notification_method="Telegram 通知"
+                fi
+            fi
+        fi
+
+        # 如果通知功能不可用，询问用户是否继续
+        if [ "$notification_available" = false ]; then
+            echo ""
+            echo -e "${YELLOW}========================================${NC}"
+            echo -e "${YELLOW}⚠️  通知功能不可用${NC}"
+            echo -e "${YELLOW}========================================${NC}"
+            echo ""
+            echo -e "${RED}当前配置的通知方式: $NOTIFY_METHOD${NC}"
+            echo -e "${RED}问题: ${NC}"
+            if [ "$NOTIFY_METHOD" = "url" ] || [ "$NOTIFY_METHOD" = "all" ]; then
+                echo "  - 未配置 REMOTE_NOTIFY_URL"
+                echo "  - 或缺少 HTTP 客户端 (curl/wget)"
+            elif [ "$NOTIFY_METHOD" = "telegram" ]; then
+                echo "  - 未配置 TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID"
+                echo "  - 或缺少 curl"
+            else
+                echo "  - 未知的配置错误"
+            fi
+            echo ""
+            echo -e "${CYAN}⚠️  注意事项:${NC}"
+            echo ""
+            echo -e "${YELLOW}  如果您是通过 ${RED}远程 SSH${YELLOW} 连接到此主机:${NC}"
+            echo -e "${YELLOW}    - 修改 MAC 后 IP 地址可能会改变${NC}"
+            echo -e "${YELLOW}    - 您需要使用其他方式找到主机的 IP 地址${NC}"
+            echo -e "${YELLOW}    - 可用方法:${NC}"
+            echo -e "${YELLOW}      • 路由器 DHCP 客户端列表${NC}"
+            echo -e "${YELLOW}      • 扫描局域网: sudo $0 scan $SCAN_NETWORK${NC}"
+            echo -e "${YELLOW}      • 直接连显示器查看 IP${NC}"
+            echo ""
+            echo -e "${GREEN}  如果您是在 ${GREEN}本地控制${NC} ${GREEN}此主机:${NC}"
+            echo -e "${GREEN}    - 无需担心，修改后可直接在终端看到新 IP${NC}"
+            echo -e "${GREEN}    - 本地文件通知将保存到: $LOCAL_NOTIFY_FILE${NC}"
+            echo ""
+            echo -e "${CYAN}💡 建议: 可以使用 'localfile' 模式作为保底方案${NC}"
+            echo ""
+            echo -e "${YELLOW}========================================${NC}"
+            echo ""
+
+            read -p "是否继续？(y/N): " confirm_continue
+            if [ "$confirm_continue" != "y" ] && [ "$confirm_continue" != "Y" ]; then
+                echo ""
+                echo -e "${CYAN}已取消操作${NC}"
+                echo -e "${CYAN}如需继续，请配置通知功能后重试:${NC}"
+                echo ""
+                echo -e "${CYAN}方法1: 使用本地文件通知${NC}"
+                echo "  编辑脚本，设置: NOTIFY_METHOD=\"localfile\""
+                echo ""
+                echo -e "${CYAN}方法2: 配置 URL 通知${NC}"
+                echo "  1. 启动通知服务器: python3 notification-server.py"
+                echo "  2. 编辑脚本，设置: REMOTE_NOTIFY_URL=\"http://YOUR_IP:8089\""
+                echo ""
+                exit 0
+            else
+                echo ""
+                echo -e "${GREEN}✓ 继续执行（通知功能已禁用）${NC}"
+                echo -e "${YELLOW}  MAC 修改功能将正常工作${NC}"
+                # 自动切换到 localfile 模式
+                NOTIFY_METHOD="localfile"
+                echo -e "${CYAN}  已自动切换到 localfile 通知模式${NC}"
+                echo ""
+            fi
+        else
+            log "通知功能: $notification_method"
+        fi
+
         # 支持的发行版提示
         if [ "$supported" = false ] && [ "$OS_NAME" != "unknown" ]; then
             echo -e "${YELLOW}提示: $OS_NAME 可能未在测试列表中${NC}"
