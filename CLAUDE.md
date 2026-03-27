@@ -168,7 +168,7 @@ release.ps1 脚本执行完成后会自动清理以下临时文件：
 
 ### main 分支文件规范
 
-main 分支只包含发布所需文件，共 5 个：
+main 分支只包含发布所需文件，共 7 个：
 
 ```
 LICENSE
@@ -176,6 +176,8 @@ README.md
 README_ZH.md
 linux-mac-changer.sh
 notification-server.py
+mac修改端执行过程.txt
+通知服务器打印及输出.txt
 ```
 
 **禁止添加其他文件**，如需更新请在 develop 分支操作后手动合并。
@@ -186,7 +188,7 @@ notification-server.py
 git checkout main
 
 # 2. 只合并需要的文件
-git checkout develop -- LICENSE README.md README_ZH.md linux-mac-changer.sh notification-server.py
+git checkout develop -- LICENSE README.md README_ZH.md linux-mac-changer.sh notification-server.py "mac修改端执行过程.txt" "通知服务器打印及输出.txt"
 
 # 3. 提交并推送
 git add .
