@@ -49,7 +49,7 @@ powershell -File release.ps1
 # 脚本自动完成：
 # - 读取当前版本号
 # - 主版本号 +1 (v1.0.0 -> v2.0.0)
-# - 创建 zip 压缩包（含 README.md、README_zh.md）
+# - 创建 zip 压缩包（含 README.md、README_ZH.md）
 # - 上传到 GitHub Release
 # - 自动删除本地临时文件（包括 release.ps1 本身）
 # - 创建并推送版本标签
@@ -96,7 +96,7 @@ $zipName = "linux-mac-changer-$newVersion.zip"
 # 创建 zip 压缩包
 Write-Host "创建压缩包: $zipName" -ForegroundColor Cyan
 if (Test-Path $zipName) { Remove-Item $zipName -Force }
-Compress-Archive -Path "README.md", "README_zh.md", "linux-mac-changer.sh", "notification-server.py" -DestinationPath $zipName -Force
+Compress-Archive -Path "README.md", "README_ZH.md", "linux-mac-changer.sh", "notification-server.py" -DestinationPath $zipName -Force
 
 # 创建 Release 说明
 $releaseNotes = @"
@@ -110,7 +110,7 @@ $releaseNotes = @"
 - linux-mac-changer.sh - 主脚本
 - notification-server.py - 通知服务器
 - README.md - 使用说明（英文）
-- README_zh.md - 使用说明（中文）
+- README_ZH.md - 使用说明（中文）
 "@
 
 # 检查并删除旧 tag
@@ -173,7 +173,7 @@ main 分支只包含发布所需文件，共 5 个：
 ```
 LICENSE
 README.md
-README_zh.md
+README_ZH.md
 linux-mac-changer.sh
 notification-server.py
 ```
@@ -186,7 +186,7 @@ notification-server.py
 git checkout main
 
 # 2. 只合并需要的文件
-git checkout develop -- LICENSE README.md README_zh.md linux-mac-changer.sh notification-server.py
+git checkout develop -- LICENSE README.md README_ZH.md linux-mac-changer.sh notification-server.py
 
 # 3. 提交并推送
 git add .
