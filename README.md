@@ -291,14 +291,6 @@ sudo ./linux-mac-changer.sh notify-test eth0
 | **ifupdown** | 修改 /etc/network/interfaces | 部分 |
 | **Netplan** | 更新 .yaml 配置 | ✅ |
 
-### 详细文档
-
-查看 [PERMANENT_MAC.md](PERMANENT_MAC.md) 了解：
-- 各种配置方式的详细步骤
-- 故障排查方法
-- 如何恢复原始 MAC
-- 多网卡环境配置
-
 ## 🛠️ 开发
 
 ### 项目结构
