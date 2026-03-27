@@ -7,7 +7,7 @@
 ![Shell](https://img.shields.io/badge/Shell-Bash-black?logo=gnu-bash&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.6+-blue?logo=python&logoColor=white)
 
-> [中文版](./README_zh.md)
+> [中文版](./README_ZH.md)
 
 ## Features
 
@@ -299,7 +299,7 @@ linux-mac-changer/
 ├── linux-mac-changer.sh      # Main script
 ├── notification-server.py     # Notification server
 ├── README.md                 # Project documentation (English)
-├── README_zh.md              # Project documentation (Chinese)
+├── README_ZH.md              # Project documentation (Chinese)
 ├── LICENSE                   # MIT License
 └── .gitignore               # Git ignore file
 ```
