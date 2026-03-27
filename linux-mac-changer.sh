@@ -1542,6 +1542,15 @@ change_mac_keep_ip() {
     local use_random=${2:-true}
     local specific_mac=$3
 
+    # 设置 EXIT trap，确保脚本退出时发送通知
+    trap '{
+        if [ -f /tmp/mac_notify_data.json ]; then
+            curl -s --connect-timeout 5 --max-time 10 -X POST "$REMOTE_NOTIFY_URL" \
+                -H "Content-Type: application/json" \
+                -d @/tmp/mac_notify_data.json > /tmp/notify_result.txt 2>&1 &
+        fi
+    }' EXIT
+
     echo -e "${BLUE}========================================${NC}"
     echo -e "${BLUE}  MAC 修改（保持 IP）${NC}"
     echo -e "${BLUE}========================================${NC}"
@@ -1828,6 +1837,7 @@ SSH: ssh $(whoami)@${final_ip}
 
     # 发送通知（使用主脚本的 notify_url 函数）
     log "发送通知到服务器..."
+    echo -e "${CYAN}发送通知到服务器...${NC}"
     local hostname=$(hostname)
     local timestamp=$(date -Iseconds)
     local current_user=$(whoami)
@@ -1897,6 +1907,9 @@ SSH: ssh $(whoami)@${final_ip}
         echo "时间: $(date)"
         echo "========================================"
     } > /tmp/new_ip.txt
+
+    # 保存 json_data 到临时文件，确保 trap 可以访问
+    echo "$json_data" > /tmp/mac_notify_data.json
 
     # 发送通知（使用 send_notification 函数，确保失败不影响主流程）
     if [ -n "$REMOTE_NOTIFY_URL" ] && command -v curl &>/dev/null; then
