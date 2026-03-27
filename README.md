@@ -18,25 +18,6 @@
 - 🛡️ **安全可靠** - 三重策略确保网络可用性
 - 🔍 **系统检测** - 自动检测操作系统和依赖项
 
-## 🖼️ 截图
-
-```
-╔═══════════════════════════════════════════════════════════════╗
-║          Linux MAC 修改工具 v1.0.0 - 最终总结                    ║
-╚═══════════════════════════════════════════════════════════════╝
-
-📦 核心文件 (3 个):
-  ├── linux-mac-changer.sh    (34 KB, 1092 行)  主脚本
-  ├── notification-server.py   (5.7 KB, 178 行)  通知服务器
-  └── README.md                (9.6 KB, 437 行)  完整文档
-
-🔍 系统兼容性:
-  ✅ Debian/Ubuntu/Kali Linux
-  ✅ Raspberry Pi OS
-  ✅ Armbian
-  ✅ 其他 Debian 系发行版
-```
-
 ## 📋 系统要求
 
 ### 支持的操作系统
@@ -105,10 +86,115 @@ sudo apt install -y jq               # JSON 处理（推荐）
 sudo apt install -y nmap             # 网络扫描（用于 scan 命令）
 ```
 
+### 2.1 检查依赖
+
+验证必需命令是否已安装：
+
+```bash
+# 检查必需命令
+which ip grep awk sed
+which dhclient || which dhcpcd
+which curl || which wget
+
+# 检查可选命令
+which jq
+which nmap
+```
+
+如果某个命令未找到，请安装对应的软件包。
+
 ### 3. 配置权限
 
 ```bash
 chmod +x linux-mac-changer.sh
+```
+
+## ⚙️ 配置
+
+### 脚本配置
+
+编辑 `linux-mac-changer.sh` 顶部的配置区域：
+
+```bash
+# 通知方式：url, telegram, localfile, all
+NOTIFY_METHOD="url"
+
+# URL 通知配置
+REMOTE_NOTIFY_URL="http://YOUR_IP:8089"
+
+# Telegram 通知配置（可选）
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_CHAT_ID=""
+
+# 本地文件路径
+LOCAL_NOTIFY_FILE="/tmp/new_ip.txt"
+
+# 网络扫描配置
+SCAN_NETWORK="192.168.70.0/24"
+SSH_PORT=22
+```
+
+### 通知服务器
+
+启动通知服务器：
+
+```bash
+python3 notification-server.py
+```
+
+服务器监听端口：`8089`
+
+### 通知格式
+
+#### 请求格式（结构化 JSON）
+
+```json
+{
+  "hostname": "linux-host",
+  "status": "ip_kept",
+  "interface": "eth0",
+  "mac": {
+    "original": "90:2e:16:87:84:81",
+    "new": "90:2e:16:31:dc:2f"
+  },
+  "ip": {
+    "original": "192.168.70.115",
+    "current": "192.168.70.115"
+  },
+  "gateway": "192.168.70.1",
+  "ssh": "ssh root@192.168.70.115",
+  "timestamp": "2026-03-26T20:00:00+08:00"
+}
+```
+
+#### 状态码
+
+- `ip_kept`: IP 保持不变
+- `ip_changed`: IP 已改变
+- `test`: 测试通知
+
+### 通知服务器 API
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/` | POST | 发送通知 |
+| `/` | GET | 查看服务器状态 |
+| `/notifications` | GET | 获取所有通知 |
+| `/notifications/latest` | GET | 获取最新通知 |
+
+#### API 示例
+
+**发送通知**:
+```bash
+curl -X POST "http://YOUR_IP:8089" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "hostname": "linux-host",
+    "status": "ip_kept",
+    "interface": "eth0",
+    "mac": {"original": "...", "new": "..."},
+    "ip": {"original": "...", "current": "..."}
+  }'
 ```
 
 ## 🚀 使用方法
@@ -148,41 +234,6 @@ sudo ./linux-mac-changer.sh notify-test eth0
 | `custom-keepip` | `<接口> <MAC>` | 自定义 MAC，保持 IP | 尽力保持 |
 | `notify-test` | `[接口]` | 测试通知配置 | - |
 | `scan` | `[网段]` | 扫描局域网 | - |
-
-## ⚙️ 配置
-
-### 脚本配置
-
-编辑 `linux-mac-changer.sh` 顶部的配置区域：
-
-```bash
-# 通知方式：url, telegram, localfile, all
-NOTIFY_METHOD="url"
-
-# URL 通知配置
-REMOTE_NOTIFY_URL="http://YOUR_IP:8089"
-
-# Telegram 通知配置（可选）
-TELEGRAM_BOT_TOKEN=""
-TELEGRAM_CHAT_ID=""
-
-# 本地文件路径
-LOCAL_NOTIFY_FILE="/tmp/new_ip.txt"
-
-# 网络扫描配置
-SCAN_NETWORK="192.168.70.0/24"
-SSH_PORT=22
-```
-
-### 通知服务器
-
-启动通知服务器：
-
-```bash
-python3 notification-server.py
-```
-
-服务器监听端口：`8089`
 
 ## 📊 保持 IP 模式详解
 
@@ -243,35 +294,6 @@ python3 notification-server.py
 - 如何恢复原始 MAC
 - 多网卡环境配置
 
-## 🔔 通知格式
-
-### 请求格式（结构化 JSON）
-
-```json
-{
-  "hostname": "linux-host",
-  "status": "ip_kept",
-  "interface": "eth0",
-  "mac": {
-    "original": "90:2e:16:87:84:81",
-    "new": "90:2e:16:31:dc:2f"
-  },
-  "ip": {
-    "original": "192.168.70.115",
-    "current": "192.168.70.115"
-  },
-  "gateway": "192.168.70.1",
-  "ssh": "ssh root@192.168.70.115",
-  "timestamp": "2026-03-26T20:00:00+08:00"
-}
-```
-
-### 状态码
-
-- `ip_kept`: IP 保持不变
-- `ip_changed`: IP 已改变
-- `test`: 测试通知
-
 ## 🛠️ 开发
 
 ### 项目结构
@@ -299,32 +321,6 @@ linux-mac-changer/
 - 函数命名采用 snake_case
 - 使用有意义的变量名
 - 包含完整的错误处理
-
-## 📖 API 文档
-
-### 通知服务器 API
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/` | POST | 发送通知 |
-| `/` | GET | 查看服务器状态 |
-| `/notifications` | GET | 获取所有通知 |
-| `/notifications/latest` | GET | 获取最新通知 |
-
-### API 示例
-
-**发送通知**:
-```bash
-curl -X POST "http://YOUR_IP:8089" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "hostname": "linux-host",
-    "status": "ip_kept",
-    "interface": "eth0",
-    "mac": {"original": "...", "new": "..."},
-    "ip": {"original": "...", "current": "..."}
-  }'
-```
 
 ## 🔍 故障排查
 
@@ -416,10 +412,6 @@ sudo ./linux-mac-changer.sh notify-test eth0
 ## 📄 许可证
 
 本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
-
-## 👨‍💻 作者
-
-DXShelley - [GitHub](https://github.com/DXShelley)
 
 ## 🙏 致谢
 
