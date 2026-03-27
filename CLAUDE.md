@@ -30,6 +30,34 @@ git commit -m "merge: ..."
 git push
 ```
 
+### 版本发布流程
+
+```bash
+# 1. 确保在 main 分支且已合并最新代码
+git checkout main
+git pull origin main
+
+# 2. 运行打包脚本（自动递增主版本号）
+# Windows
+powershell -File release.ps1
+
+# Linux/macOS
+bash release.sh
+
+# 脚本自动完成：
+# - 读取当前版本号
+# - 主版本号 +1 (v1.0.0 -> v2.0.0)
+# - 创建 zip 压缩包（不含 CLAUDE.md）
+# - 上传到 GitHub Release
+# - 自动删除本地 zip 文件
+```
+
+### 版本号规则
+
+- 使用语义化版本（SemVer）：vMAJOR.MINOR.PATCH
+- 默认递增 MAJOR 版本号
+- 手动指定版本：运行脚本时输入具体版本号
+
 ## 跨平台开发注意事项
 
 ### 换行符问题
