@@ -45,7 +45,7 @@ Write-Host "创建压缩包: $zipName" -ForegroundColor Cyan
 if (Test-Path $zipName) {
     Remove-Item $zipName -Force
 }
-Compress-Archive -Path "README.md", "linux-mac-changer.sh", "notification-server.py" -DestinationPath $zipName -Force
+Compress-Archive -Path "README.md", "README_zh.md", "linux-mac-changer.sh", "notification-server.py" -DestinationPath $zipName -Force
 
 # 创建 Release 说明
 $releaseNotes = @"
@@ -72,7 +72,8 @@ sudo sh linux-mac-changer.sh notify-test eth0
 ### 文件说明
 - `linux-mac-changer.sh` - 主脚本
 - `notification-server.py` - 通知服务器
-- `README.md` - 使用说明
+- `README.md` - 使用说明（英文）
+- `README_zh.md` - 使用说明（中文）
 "@
 
 # 检查是否存在同名 tag，存在则删除
