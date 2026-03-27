@@ -308,7 +308,70 @@ log() {
 
 # 检测网络管理方式
 detect_network_manager() {
-    # 1. 检查 NetworkManager（最常用）
+    local check_interface="$1"
+
+    # 如果指定了接口，优先检查该接口的实际管理方式
+    if [ -n "$check_interface" ]; then
+        # 1. 检查接口是否在 Netplan 配置中
+        if [ -d /etc/netplan ] && [ -f /etc/netplan/*.yaml ]; then
+            # 检查接口是否在 netplan 配置中
+            if grep -q "$check_interface:" /etc/netplan/*.yaml 2>/dev/null; then
+                # 检查 renderer 设置
+                local renderer=$(grep -E "^\s*renderer:" /etc/netplan/*.yaml 2>/dev/null | head -1 | awk '{print $2}')
+                if [ "$renderer" = "networkd" ]; then
+                    echo "netplan"
+                    return 0
+                elif [ "$renderer" = "NetworkManager" ]; then
+                    # 确认该接口确实被 NM 管理
+                    if command -v nmcli &>/dev/null && nmcli -t -f DEVICE,STATE device status 2>/dev/null | grep -q "^${check_interface}:connected"; then
+                        echo "networkmanager"
+                        return 0
+                    else
+                        # 在 NM 配置中但实际未被管理，使用 netplan
+                        echo "netplan"
+                        return 0
+                    fi
+                else
+                    # 默认使用 netplan
+                    echo "netplan"
+                    return 0
+                fi
+            fi
+        fi
+
+        # 2. 检查接口是否被 NetworkManager 管理
+        if command -v nmcli &>/dev/null; then
+            local nm_managed=$(nmcli -t -f DEVICE,STATE device status 2>/dev/null | grep "^${check_interface}:" | cut -d: -f2)
+            if [ "$nm_managed" = "connected" ] || [ "$nm_managed" = "connecting" ]; then
+                echo "networkmanager"
+                return 0
+            fi
+            # 检查是否有 unmanaged 但有连接
+            local nm_connection=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep ":${check_interface}$")
+            if [ -n "$nm_connection" ]; then
+                echo "networkmanager"
+                return 0
+            fi
+        fi
+
+        # 3. 检查接口是否在 /etc/network/interfaces 中
+        if [ -f /etc/network/interfaces ]; then
+            if grep -q "^iface $check_interface " /etc/network/interfaces 2>/dev/null; then
+                echo "ifupdown"
+                return 0
+            fi
+        fi
+
+        # 4. 检查是否有 systemd-networkd 配置
+        if [ -d /etc/systemd/network ] && ls /etc/systemd/network/*.link 2>/dev/null | head -1 | grep -q .; then
+            if grep -q "$check_interface" /etc/systemd/network/*.link 2>/dev/null; then
+                echo "systemd-networkd"
+                return 0
+            fi
+        fi
+    fi
+
+    # 未指定接口时的全局检测（保持向后兼容）
     if command -v systemctl &>/dev/null; then
         # systemd 系统
         if systemctl is-active --quiet NetworkManager 2>/dev/null; then
@@ -327,13 +390,13 @@ detect_network_manager() {
         fi
     fi
 
-    # 2. 检查 Netplan（Ubuntu 18.04+）
+    # 检查 Netplan（Ubuntu 18.04+）
     if [ -d /etc/netplan ] && [ -f /etc/netplan/*.yaml ]; then
         echo "netplan"
         return 0
     fi
 
-    # 3. 检查 ifupdown（传统 Debian/Ubuntu）
+    # 检查 ifupdown（传统 Debian/Ubuntu）
     if [ -f /etc/network/interfaces ]; then
         # 检查是否有实际的配置（不只是注释）
         if grep -q "^iface" /etc/network/interfaces 2>/dev/null; then
@@ -342,7 +405,7 @@ detect_network_manager() {
         fi
     fi
 
-    # 4. 无法确定
+    # 无法确定
     echo "unknown"
     return 1
 }
@@ -351,7 +414,7 @@ detect_network_manager() {
 make_mac_permanent() {
     local interface=$1
     local new_mac=$2
-    local manager=$(detect_network_manager)
+    local manager=$(detect_network_manager "$interface")
 
     echo -e "${CYAN}正在永久保存 MAC 地址...${NC}"
     echo -e "${CYAN}检测到网络管理方式: $manager${NC}"
@@ -432,13 +495,26 @@ make_mac_permanent() {
             else
                 echo -e "${YELLOW}✗ 无法找到网络连接${NC}"
                 echo ""
-                echo -e "${CYAN}可用连接列表:${NC}"
+                echo -e "${CYAN}问题分析:${NC}"
+                echo -e "${YELLOW}  接口 '$interface' 当前未被 NetworkManager 管理${NC}"
+                echo -e "${CYAN}可能原因:${NC}"
+                echo -e "${YELLOW}  1. 接口是通过其他方式管理 (systemd-networkd, ifupdown 等)${NC}"
+                echo -e "${YELLOW}  2. 接口存在但未在 NetworkManager 中激活${NC}"
+                echo ""
+                echo -e "${CYAN}可用连接列表 (仅显示 wlan0):${NC}"
                 nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | while IFS=: read -r name device; do
                     echo "  • $name (设备: $device)"
                 done
                 echo ""
-                echo -e "${CYAN}请使用以下命令查看所有连接:${NC}"
+                echo -e "${CYAN}查看所有连接:${NC}"
                 echo "  nmcli connection show"
+                echo ""
+                echo -e "${CYAN}解决方案:${NC}"
+                echo -e "${GREEN}  1. 如果接口通过其他方式管理，请使用相应方法${NC}"
+                echo -e "${GREEN}  2. 或者先为接口创建 NetworkManager 连接:${NC}"
+                echo -e "${GREEN}     sudo nmcli con add type ethernet ifname '$interface' con-name '$interface-auto'"
+                echo -e "${GREEN}     sudo nmcli con up '$interface-auto'"
+                echo -e "${GREEN}  3. 重新运行脚本进行永久保存${NC}"
                 return 1
             fi
             ;;
@@ -828,7 +904,7 @@ PYTHON_SCRIPT
 verify_permanent_config() {
     local interface=$1
     local expected_mac=$2
-    local manager=$(detect_network_manager)
+    local manager=$(detect_network_manager "$interface")
 
     echo -e "${CYAN}正在验证永久保存配置...${NC}"
     echo -e "${CYAN}检测到网络管理方式: $manager${NC}"
